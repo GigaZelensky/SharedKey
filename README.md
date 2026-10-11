@@ -58,16 +58,16 @@ Right-click an encrypted text message and choose **View encrypted original** to 
 
 ## Limits
 
-| Item                                             | Behavior                                                                                |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Text                                             | Encryption adds length. SharedKey blocks a send that exceeds Discord's character limit. |
-| Outgoing files                                   | Up to 64 MiB, within your Discord upload allowance.                                     |
-| Incoming files up to 64 MiB                      | Decrypt in memory for previews and saving.                                              |
-| Larger incoming files                            | Save the encrypted file, then use the [offline decryptor](docs/offline-decryption.md).  |
-| Stickers, forwards, scheduled sends              | Blocked while this chat's encryption is on.                                             |
-| Calls, screen sharing, reactions, slash commands | Outside SharedKey's encryption.                                                         |
+| Item                                                   | Behavior                                                                                |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Text                                                   | Encryption adds length. SharedKey blocks a send that exceeds Discord's character limit. |
+| Outgoing files                                         | Up to 64 MiB, within your Discord upload allowance.                                     |
+| Incoming files up to 64 MiB                            | Decrypt in memory for previews and saving.                                              |
+| Larger incoming files                                  | Save the encrypted file, then use the [offline decryptor](docs/offline-decryption.md).  |
+| Stickers, polls, components, forwards, scheduled sends | Blocked while this chat's encryption is on.                                             |
+| Calls, screen sharing, reactions, slash commands       | Outside SharedKey's encryption.                                                         |
 
-Discord can still see participants, timestamps, message and file sizes, and reply relationships. Linked images and GIFs remain hosted by their original provider; previewing an encrypted link doesn't encrypt the remote resource.
+Discord can still see participants, timestamps, message and file sizes, and reply relationships. Linked-media previews disclose the requested URL to its host; Discord CDN requests and signed-URL refreshes go to Discord. Plaintext lives inside Discord's client for rendering, so this plugin cannot protect it from hostile client code. See the [security review](docs/security-review-2026-10-12.md).
 
 SharedKey uses AES-256-GCM with random 256-bit keys or password-derived keys. It has no independent security audit or forward secrecy. Read the [security notes](SECURITY.md) before relying on it for sensitive conversations.
 

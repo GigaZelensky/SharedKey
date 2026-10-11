@@ -122,7 +122,7 @@ function dmParticipants(channelId: string) {
 
 async function sendExchange(channelId: string, content?: string) {
     if (!content || !running) return;
-    await MessageActions.sendMessage(channelId, { content, tts: false, validNonShortcutEmojis: [], invalidEmojis: [] }, true, { allowedMentions: { parse: [], repliedUser: false } });
+    await MessageActions.sendMessage(channelId, { content, tts: false, validNonShortcutEmojis: [], invalidEmojis: [] }, true, { allowedMentions: { parse: [], replied_user: false } });
 }
 
 async function receiveAutomatic(message: Message, historical = false) {
@@ -253,9 +253,12 @@ async function protect(channelId: string, message: MessageObject | any, options?
     const info = await Native.channelInfo(channelId);
     if (!info.enabled && !force) return;
     if (!message || typeof message.content !== "string") throw new Error("Unsupported message type in a protected chat.");
-    if (message.sticker_ids?.length || options?.stickerIds?.length || options?.alsoForwardToChannelId || message.message_snapshots?.length || message.messageSnapshots?.length || options?.scheduledTimestamp) {
-        throw new Error("Stickers, forwards and scheduled sends are not supported in protected chats.");
+    if (message.sticker_ids?.length || options?.stickerIds?.length || options?.alsoForwardToChannelId || message.message_snapshots?.length || message.messageSnapshots?.length || options?.scheduledTimestamp
+        || options?.messageReference?.type === 1 || message.message_reference?.type === 1
+        || message.components?.length || message.poll || options?.poll || options?.activityAction || options?.sharedCustomTheme || options?.contentInventoryEntry || options?.announcementSendOptions || options?.mediaMention) {
+        throw new Error("This message type contains fields SharedKey cannot encrypt. Send ordinary text or attach a file instead.");
     }
+    if (options?.attachments?.length || message.attachments?.length) throw new Error("Pre-uploaded attachments cannot be verified. Remove them and attach the original files again for encryption.");
     const user = UserStore.getCurrentUser();
     if (!user) throw new Error("Cannot identify the current sender. Sending was blocked.");
     const originalText = message.content;
@@ -266,7 +269,11 @@ async function protect(channelId: string, message: MessageObject | any, options?
     message.tts = false;
     message.validNonShortcutEmojis = [];
     message.invalidEmojis = [];
-    if (options) options.allowedMentions = { parse: [], repliedUser: false };
+    if (options) {
+        options.allowedMentions = { parse: [], replied_user: false };
+        delete options.gifMetadata;
+        delete options.inviteAnalyticsMetadata;
+    }
     message.allowed_mentions = { parse: [], users: [], roles: [], replied_user: false };
 }
 
@@ -292,7 +299,16 @@ export default definePlugin({
         }
     },
     isLocalImage: (src: string) => !!localImage(src),
+    networkMessage: wireMessage,
     patches: [{
+        // This manager resolves codes extracted from message text over the
+        // network. Give it the ciphertext, while native UI stores keep plaintext.
+        find: '"MessageCodedLinkManager"',
+        replacement: {
+            match: /function (\i)\((\i)\)\{(?=\i\(\2\.content\?\?null,\2\.channel_id\))/,
+            replace: "$&$2=$self.networkMessage($2);"
+        }
+    }, {
         find: ".edited_timestamp?new Date(",
         replacement: {
             match: /null!=(\i)\.content&&""!==\1\.content&&/,
@@ -380,6 +396,22 @@ export default definePlugin({
             };
             MessageActions[name] = wrapped;
             restorers.push(() => { if (MessageActions[name] === wrapped) MessageActions[name] = original; });
+        }
+        // Attachment removal can pass locally decrypted filenames/URLs back to
+        // the API. The server needs only the IDs of attachments being retained.
+        const patchAttachments = MessageActions.patchMessageAttachments;
+        if (typeof patchAttachments === "function") {
+            const wrapped = async function (this: unknown, channelId: string, messageId: string, attachments: any[]) {
+                if (encryptedEdit(channelId, messageId)) {
+                    const original = MessageStore.getMessage(channelId, messageId);
+                    const ids = new Set(original ? wireMessage(original).attachments?.map(file => file.id) : []);
+                    if (!Array.isArray(attachments) || attachments.some(file => !ids.has(file.id))) throw new Error("Cannot verify this encrypted message's attachments.");
+                    attachments = attachments.map(file => ({ id: file.id }));
+                }
+                return patchAttachments.call(this, channelId, messageId, attachments);
+            };
+            MessageActions.patchMessageAttachments = wrapped;
+            restorers.push(() => { if (MessageActions.patchMessageAttachments === wrapped) MessageActions.patchMessageAttachments = patchAttachments; });
         }
     },
     stop() {

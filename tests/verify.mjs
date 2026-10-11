@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, webcrypto } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -44,6 +44,37 @@ check("Unicode, multiline, emoji, markup and empty text", () =>
     ["", "hello", "🔒 Привет\nこんにちは\n<@12345> **bold**", "x".repeat(4000)].forEach(roundtrip),
 );
 const ciphertext = roundtrip("secret text");
+// Independently decode the documented wire format with Web Crypto rather than
+// testing only an encrypt/decrypt round trip through the same implementation.
+const sealed = Buffer.from(ciphertext.slice(6, -1), "base64url");
+const contextBytes = Buffer.from(JSON.stringify(["VencordSharedKey", 1, "text", channel, author]));
+const baseKey = await webcrypto.subtle.importKey(
+    "raw",
+    Buffer.from(key.slice(5), "base64url"),
+    "HKDF",
+    false,
+    ["deriveKey"],
+);
+const aesKey = await webcrypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: sealed.subarray(0, 8), info: contextBytes },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
+);
+const independentPlaintext = await webcrypto.subtle.decrypt(
+    {
+        name: "AES-GCM",
+        iv: sealed.subarray(8, 20),
+        additionalData: Buffer.concat([contextBytes, sealed.subarray(0, 8)]),
+        tagLength: 128,
+    },
+    aesKey,
+    sealed.subarray(20),
+);
+check("Documented ciphertext independently decrypts with Web Crypto HKDF and AES-256-GCM", () =>
+    assert.equal(Buffer.from(independentPlaintext).toString(), "secret text"),
+);
 check("Fresh nonces", () =>
     assert.notEqual(ciphertext, crypto.encryptText("secret text", key, channel, author)),
 );
@@ -203,7 +234,7 @@ globalThis.testDispatcher = {
 };
 const originalDispatch = testDispatcher.dispatch;
 globalThis.testActions = Object.fromEntries(
-    ["sendMessage", "_sendMessage", "editMessage"].map((name) => [
+    ["sendMessage", "_sendMessage", "editMessage", "patchMessageAttachments"].map((name) => [
         name,
         (...args) => {
             sent.push({ name, args });
@@ -271,7 +302,7 @@ assert.equal(await plugin.onBeforeMessageSend(channel, message, options, { hasSt
 check("Composer send encrypts and removes TTS/mention metadata", () => {
     assert.equal(crypto.decryptText(message.content, keys, channel, author), "secret text");
     assert.equal(message.tts, false);
-    assert.deepEqual(options.allowedMentions, { parse: [], repliedUser: false });
+    assert.deepEqual(options.allowedMentions, { parse: [], replied_user: false });
 });
 const coldCiphertext = crypto.encryptText("Cold reply excerpt", key, channel, author);
 const replyEvent = {
@@ -302,7 +333,7 @@ check("Final guard does not double-encrypt", () =>
 );
 check("Public send preserves waitForChannelReady and guards the fourth options argument", () => {
     assert.equal(sent.at(-1).args[2], true);
-    assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], repliedUser: false });
+    assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], replied_user: false });
 });
 await testActions._sendMessage(channel, msg(), {});
 check("Direct sends through private action are encrypted", () =>
@@ -336,6 +367,78 @@ assert.equal(
 );
 checks += 3;
 console.log("PASS stickers, forwards and oversized encrypted sends cancelled");
+const privateMetadata = {
+    gifMetadata: { gif_url: "https://tenor.com/private-audit-marker", gif_id: "secret-id" },
+    inviteAnalyticsMetadata: { code: "private-invite-marker" },
+};
+await testActions.sendMessage(channel, msg(), true, privateMetadata);
+check("Encrypted sends strip GIF URL and invite analytics from the native send options", () => {
+    assert.equal(sent.at(-1).args[3].gifMetadata, undefined);
+    assert.equal(sent.at(-1).args[3].inviteAnalyticsMetadata, undefined);
+    assert.equal(JSON.stringify(sent.at(-1)).includes("private-audit-marker"), false);
+    assert.ok(privateMetadata.gifMetadata, "caller-owned options remain unmodified by the final wrapper");
+});
+for (const extras of [
+    { poll: { question: { text: "private question" } } },
+    { activityAction: {} },
+    { sharedCustomTheme: {} },
+    { contentInventoryEntry: {} },
+    { announcementSendOptions: { threadName: "private title" } },
+    { messageReference: { type: 1 } },
+    { attachments: [{ filename: "private-name.txt", uploaded_filename: "plaintext-upload" }] },
+]) {
+    const count = sent.length;
+    await assert.rejects(() => testActions._sendMessage(channel, msg(), extras));
+    assert.equal(sent.length, count);
+}
+await assert.rejects(() =>
+    testActions._sendMessage(channel, { ...msg(), components: [{ content: "private component" }] }, {}),
+);
+check(
+    "Unencrypted structured fields and unverifiable pre-uploaded files are blocked before native send",
+    () => assert.ok(true),
+);
+const attachmentMessage = {
+    id: "456789012345679123",
+    channel_id: channel,
+    author: { id: author },
+    content: crypto.encryptText("private received body", key, channel, author),
+    attachments: [
+        {
+            id: "567890123456789123",
+            filename: "encrypted.vcs",
+            url: "https://cdn.discordapp.com/attachments/encrypted.vcs",
+        },
+    ],
+};
+await testDispatcher.dispatch({ type: "MESSAGE_CREATE", message: attachmentMessage });
+const localRecord = {
+    ...events.at(-1).message,
+    attachments: [
+        { id: "567890123456789123", filename: "private-original.txt", url: "blob:local-plaintext" },
+    ],
+};
+testMessages.set(`${channel}:${attachmentMessage.id}`, localRecord);
+await testActions.patchMessageAttachments(channel, attachmentMessage.id, localRecord.attachments);
+check("Attachment edits send only retained server IDs, never local filenames or blob URLs", () =>
+    assert.deepEqual(sent.at(-1).args[2], [{ id: "567890123456789123" }]),
+);
+await assert.rejects(() =>
+    testActions.patchMessageAttachments(channel, attachmentMessage.id, [{ id: "unknown" }]),
+);
+enabled = false;
+await testActions.editMessage(channel, attachmentMessage.id, {
+    content: "private edit from decrypted backing store",
+});
+check("Editing a decrypted native record remains encrypted after disabling encryption for new sends", () => {
+    assert.equal(
+        crypto.decryptText(sent.at(-1).args[2].content, keys, channel, author),
+        "private edit from decrypted backing store",
+    );
+    assert.equal(JSON.stringify(sent.at(-1)).includes("private edit from decrypted backing store"), false);
+    assert.equal(attachmentMessage.content.startsWith("[VCS1:"), true);
+});
+enabled = true;
 fail = true;
 assert.equal((await plugin.onBeforeMessageSend(channel, msg(), {}, { hasStickers: false })).cancel, true);
 const before = sent.length;
@@ -652,7 +755,7 @@ check("Incoming DM setup sends a native-issued response once through the guarded
     ]);
     assert.equal(sent.at(-1).args[1].content, generatedControl);
     assert.equal(sent.at(-1).args[2], true);
-    assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], repliedUser: false });
+    assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], replied_user: false });
 });
 globalThis.testRecent = [controlMessage];
 plugin.flux.LOAD_MESSAGES_SUCCESS({ channelId: channel });

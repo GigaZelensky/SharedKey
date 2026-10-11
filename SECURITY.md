@@ -1,6 +1,6 @@
 # Security notes
 
-SharedKey encrypts message text and file contents before they leave the client. It does not change Discord's transport, account system, or metadata collection.
+SharedKey encrypts ordinary message text and new file uploads on its guarded send paths. It does not isolate plaintext from Discord's client code or prevent all content-derived network requests.
 
 ## Trust model
 
@@ -22,7 +22,13 @@ Keys are stored separately from Vencord's synced settings in `settings/sharedkey
 
 Other plugins and software with access to your Discord process can read drafts, decrypted content, and keys. A compromised endpoint is outside this design's protection. Text-processing plugins that send content elsewhere can also expose plaintext.
 
-The local read model returns decrypted copies from the message-store getters used by the UI. Native rendering and other plugins consuming those getters see plaintext. Original backing records and history events keep ciphertext. Encryption guards and ciphertext inspection resolve a displayed copy back to its original record, including when editing encrypted history with the chat toggle off.
+Incoming events and native local message records contain decrypted text so Discord can render it normally. Original ciphertext is retained separately for send/edit guards and ciphertext inspection. This is not a security boundary against Discord's JavaScript, other plugins, or software running as the same OS user. Discord controls its client code and could change it to collect drafts, decrypted content, or accessible secrets. Encryption protects the server-stored message/file payloads on the checked paths; it cannot guarantee that the provider can never obtain plaintext from this client.
+
+Automatic linked-media previews contact the original host, exposing the requested URL/path/query and network metadata. Discord CDN links reveal the requested resource to Discord. Refreshing an expired Discord attachment URL sends that URL to Discord's refresh API. This is separate from downloading an encrypted `.vcs` upload: a remote GIF/image link points to an already hosted resource, not an encrypted attachment. The GIF picker and explicit link/image actions also make ordinary network requests.
+
+The guarded send options remove GIF and invite analytics metadata. Unsupported polls, components, forwarded references, scheduled sends, and other structured message fields are rejected rather than sent outside the encrypted text. Unverifiable pre-uploaded attachment descriptors are also rejected; attach the original files through the guarded uploader. Attachment-removal requests for encrypted messages retain only server attachment IDs, excluding locally decrypted filenames and blob URLs.
+
+The known native background coded-link consumer receives ciphertext instead of decrypted content. This reduces automatic template/profile/storefront lookups from that manager; it is not a blanket network filter for every Discord component. Other native renderers, analytics, explicit user actions, and other plugins have not been exhaustively audited.
 
 Decrypted attachments are held in local memory and blob URLs. Saving or copying an image places plaintext in the destination file or clipboard. The offline decryptor writes a temporary plaintext file while processing; it publishes the chosen destination only after authentication succeeds. Use an output directory you control.
 
@@ -30,7 +36,7 @@ Decrypted attachments are held in local memory and blob URLs. Saving or copying 
 
 Tests cover authentication, context binding, upload guards, vault failures, file streaming, and DOM behavior. Mocked APIs and browser fixtures do not prove that every Discord build or plugin combination follows the guarded paths. Discord's private module interfaces can change. Check the [manual integration list](docs/maintaining.md) after updating.
 
-This implementation has not received an independent cryptographic audit.
+This implementation has not received an independent cryptographic audit. See the [2026-10-12 source review](docs/security-review-2026-10-12.md) for concrete checks, fixes, and remaining limits.
 
 ## Reporting a problem
 

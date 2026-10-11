@@ -123,3 +123,50 @@ assert.ok(!bundle.includes('type:"MESSAGE_LOAD_SUCCESS"'));
 console.log(
     "PASS current Discord raw-message conversion, mentions, edited timestamp, inline image/GIF classification, local empty-content update, and actual history action name",
 );
+
+// Execute the actual background consumer's entry function with a captured
+// resolver. The patch must prevent decrypted codes reaching that resolver.
+const manager = moduleSource(79153);
+const consumerMatch =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{(?=[A-Za-z_$][\w$]*\(\2\.content\?\?null,\2\.channel_id\))/;
+assert.equal([...manager.matchAll(new RegExp(consumerMatch.source, "g"))].length, 1);
+const match = consumerMatch.exec(manager);
+const consumerSource = manager.slice(match.index, manager.indexOf("class ", match.index));
+const resolverName = consumerSource.match(/\{([A-Za-z_$][\w$]*)\(/)[1];
+const plain = { id: "123", channel_id: "456", content: "https://discord.new/private-template-code" };
+const wire = { ...plain, content: "[VCS1:opaque]" };
+const resolved = [];
+const scope = { [resolverName]: (text) => resolved.push(text), $self: { networkMessage: () => wire } };
+vm.runInNewContext(`(${consumerSource})`, scope)(plain);
+assert.equal(
+    resolved.pop(),
+    plain.content,
+    "unpatched manager automatically consumes decrypted link content",
+);
+const protectedConsumer = consumerSource.replace(consumerMatch, "$&$2=$self.networkMessage($2);");
+vm.runInNewContext(`(${protectedConsumer})`, scope)(plain);
+assert.equal(resolved.pop(), wire.content);
+assert.equal(plain.content, "https://discord.new/private-template-code");
+console.log(
+    "PASS actual background link-consumer patch feeds ciphertext to its resolver while keeping native UI input unchanged",
+);
+
+assert.equal(
+    bundle.split('"MessageCodedLinkManager"').length - 1,
+    1,
+    "the network-consumer patch anchor must be unique",
+);
+const uploader = moduleSource(280889);
+const batchUploader = moduleSource(395780);
+assert.equal([...uploader.matchAll(/async upload\(\)\{/g)].length, 1);
+assert.equal([...batchUploader.matchAll(/async uploadFiles\([A-Za-z_$][\w$]*\)\{/g)].length, 1);
+const protectedUploader = uploader.replace(/async upload\(\)\{/, "$&await $self.guardUploads([this]);");
+const uploadBody = protectedUploader.slice(protectedUploader.indexOf("async upload(){"));
+assert.ok(uploadBody.indexOf("await $self.guardUploads") < uploadBody.indexOf("getUploadPayload(this)"));
+assert.ok(
+    uploadBody.indexOf("getUploadPayload(this)") <
+        uploadBody.indexOf("getCreateAttachmentURL(this.channelId)"),
+);
+console.log(
+    "PASS current native upload guard anchors execute before upload metadata/reservation and byte transfer",
+);
