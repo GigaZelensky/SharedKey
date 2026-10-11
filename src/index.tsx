@@ -20,11 +20,10 @@ import { localImage, retryFailedAttachments } from "./FileAttachments";
 import { installLocalImageActions } from "./LocalImageActions";
 import { MessagePaint } from "./MessagePaint";
 import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
-import { installMessageProjection, refreshProjectedMessages } from "./MessageProjection";
 import { clearMessageCache, rememberPlaintext, retryFailedMessages } from "./MessageView";
 import type * as NativeTypes from "./native";
 import { EncryptionOptions } from "./Options";
-import { installReplyPreviews, refreshReplies } from "./ReplyPreview";
+import { refreshReceivedMessages } from "./ReceiveMessages";
 import style from "./style.css?managed";
 import { wireMessage } from "./WireMessages";
 
@@ -44,7 +43,7 @@ function initialChat(channelId: string): ChatDisplay {
 }
 function chatUpdated(channelId: string, info: { enabled: boolean; color: string; }) { rememberChat(channelId,info); refresh(); }
 
-const refresh = () => { retryFailedMessages(); retryFailedAttachments(); refreshProjectedMessages(); subscribers.forEach(fn => fn()); refreshReplies(); };
+const refresh = () => { retryFailedMessages(); retryFailedAttachments(); refreshReceivedMessages(true); subscribers.forEach(fn => fn()); };
 const errorText = (e: unknown) => e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "SharedKey failed. Sending was blocked.";
 let running = false;
 const restorers: (() => void)[] = [];
@@ -282,17 +281,24 @@ export default definePlugin({
     managedStyle: style,
     flux: {
         MESSAGE_CREATE({ message, optimistic }: { message: Message; optimistic?: boolean; }) {
+            message = wireMessage(message);
             if (optimistic || !message.content?.startsWith(EXCHANGE_PREFIX) || !running) return;
             const channel = ChannelStore.getChannel(message.channel_id);
             if (channel?.type !== 1 || message.author.id === UserStore.getCurrentUser()?.id) return;
             void receiveAutomatic(message).catch(e => showToast(errorText(e)));
         },
-        MESSAGE_LOAD_SUCCESS({ channelId }: { channelId: string; }) {
+        LOAD_MESSAGES_SUCCESS({ channelId }: { channelId: string; }) {
             if (running && ChannelStore.getChannel(channelId)?.type === 1) void scanExchange(channelId);
         }
     },
     isLocalImage: (src: string) => !!localImage(src),
     patches: [{
+        find: ".edited_timestamp?new Date(",
+        replacement: {
+            match: /null!=(\i)\.content&&""!==\1\.content&&/,
+            replace: 'null!=$1.content&&(""!==$1.content||$1.sharedkey_local_update)&&'
+        }
+    }, {
         // Use the native image-link labels for authenticated local images too.
         find: "native-send-sms",
         replacement: {
@@ -348,7 +354,7 @@ export default definePlugin({
             const channelId = SelectedChannelStore.getChannelId();
             if (channelId && ChannelStore.getChannel(channelId)?.type === 1) void scanExchange(channelId);
         }).catch(() => {});
-        restorers.push(installMessageProjection(), installReplyPreviews(Native), installMessagePresentation(Native), installLocalImageActions(Native));
+        restorers.push(installMessagePresentation(Native), installLocalImageActions(Native));
         addMessageAccessory("SharedKey", props => <ErrorBoundary noop><DecryptedMessage message={props.message} /></ErrorBoundary>, 0);
         // Guard the send/edit actions too, in case the composer patch is missing or
         // another plugin changes message content after the composer listener.

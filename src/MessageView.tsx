@@ -20,7 +20,7 @@ export function decryptionFailed(message: Message) { return failures.has(message
 
 export function clearMessageCache() { generation++; plaintext.clear(); failures.clear(); pending.clear(); clearAttachmentCache(); clearPreviewEmbeds(); }
 export function retryFailedMessages() { failures.clear(); }
-function messageToken(message: Message) { return `${message.channel_id}:${message.author.id}:${message.content}`; }
+function messageToken(message: Message) { return `${message.channel_id}:${message.author?.id}:${message.content}`; }
 function rememberFailure(token: string) {
     if (failures.size >= 500) failures.delete(failures.values().next().value!);
     failures.add(token);
@@ -73,8 +73,8 @@ export function prepareHistory(native: SharedKeyNative, messages: Message[]): Pr
     })]).then(() => {});
 }
 
-export function cachedPlaintext(message: Message) { return plaintext.get(`${message.channel_id}:${message.author.id}:${message.content}`); }
-export function requestPlaintext(native: SharedKeyNative, message: Message) { return decrypt(native, message, `${message.channel_id}:${message.author.id}:${message.content}`); }
+export function cachedPlaintext(message: Message) { return plaintext.get(`${message.channel_id}:${message.author?.id}:${message.content}`); }
+export function requestPlaintext(native: SharedKeyNative, message: Message) { return decrypt(native, message, `${message.channel_id}:${message.author?.id}:${message.content}`); }
 
 
 function decrypt(native: SharedKeyNative, message: Message, token: string): Promise<string> {

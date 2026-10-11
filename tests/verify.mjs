@@ -273,42 +273,28 @@ check("Composer send encrypts and removes TTS/mention metadata", () => {
     assert.equal(message.tts, false);
     assert.deepEqual(options.allowedMentions, { parse: [], repliedUser: false });
 });
-globalThis.testReference = {
-    state: 0,
-    message: {
-        id: "456789012345678901",
-        channel_id: channel,
-        author: { id: author },
-        content: message.content,
-        attachments: [],
-    },
-};
-const replyProjected = testReplyStore.getMessage(channel, "456789012345678901");
-check("Reply excerpt uses outgoing plaintext immediately without changing stored ciphertext", () => {
-    assert.equal(replyProjected.message.content, "secret text");
-    assert.equal(testReference.message.content, message.content);
-});
 const coldCiphertext = crypto.encryptText("Cold reply excerpt", key, channel, author);
-globalThis.testReference = {
-    state: 0,
+const replyEvent = {
+    type: "MESSAGE_CREATE",
+    channelId: channel,
     message: {
         id: "456789012345678902",
         channel_id: channel,
         author: { id: author },
-        content: coldCiphertext,
-        attachments: [],
+        content: "reply",
+        referenced_message: {
+            id: "456789012345678901",
+            channel_id: channel,
+            author: { id: author },
+            content: coldCiphertext,
+            attachments: [],
+        },
     },
 };
-check("Uncached reply never displays raw encryption envelope", () =>
-    assert.equal(testReplyStore.getMessageByReference({}).message.content, ""),
-);
-await new Promise((r) => setTimeout(r, 0));
-check("Uncached reply resolves to decrypted text while stores retain original", () => {
-    assert.equal(
-        testReplyStore.getMessage(channel, "456789012345678902").message.content,
-        "Cold reply excerpt",
-    );
-    assert.equal(testReference.message.content, coldCiphertext);
+await testDispatcher.dispatch(replyEvent);
+check("Referenced messages decrypt before Discord receives the message event", () => {
+    assert.equal(events.at(-1).message.referenced_message.content, "Cold reply excerpt");
+    assert.equal(replyEvent.message.referenced_message.content, coldCiphertext);
 });
 await testActions.sendMessage(channel, message, true, options);
 check("Final guard does not double-encrypt", () =>
@@ -519,7 +505,7 @@ const startEdit = {
     content: editStored.content,
 };
 await testDispatcher.dispatch(startEdit);
-check("Edit box receives plaintext while original event and store retain ciphertext", () => {
+check("Edit action receives plaintext without mutating its original event or input record", () => {
     assert.equal(events.at(-1).content, "Editable original");
     assert.equal(startEdit.content, editStored.content);
 });
@@ -615,11 +601,14 @@ testDispatcher.dispatch({ ...ordinaryNotification, body: setupWire });
 check("Setup notifications never expose wire packets", () =>
     assert.equal(events.at(-1).body, "Encryption setup"),
 );
-globalThis.testReference = { state: 0, message: { ...receive, content: setupWire, attachments: [] } };
-check("Setup reply excerpts use a short label without mutating the original", () => {
-    assert.equal(testReplyStore.getMessage(channel, receive.id).message.content, "Encryption setup");
-    assert.equal(testReference.message.content, setupWire);
+await testDispatcher.dispatch({
+    type: "MESSAGE_CREATE",
+    channelId: channel,
+    message: { ...receive, content: setupWire },
 });
+check("Setup message labels enter Discord through the incoming event", () =>
+    assert.equal(events.at(-1).message.content, "Encryption setup"),
+);
 testMessages.set(channel + ":" + receive.id, { ...receive, content: setupWire });
 const editsBefore = events.length;
 testDispatcher.dispatch({
@@ -666,7 +655,7 @@ check("Incoming DM setup sends a native-issued response once through the guarded
     assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], repliedUser: false });
 });
 globalThis.testRecent = [controlMessage];
-plugin.flux.MESSAGE_LOAD_SUCCESS({ channelId: channel });
+plugin.flux.LOAD_MESSAGES_SUCCESS({ channelId: channel });
 plugin.flux.MESSAGE_CREATE({ message: { ...controlMessage, author: { id: author } } });
 globalThis.testChannel = { type: 0, recipients: ["345678901234567890"] };
 plugin.flux.MESSAGE_CREATE({ message: { ...controlMessage, id: "456789012345679000" } });

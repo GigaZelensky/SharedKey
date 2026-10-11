@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import type { Embed, EmbedMedia } from "@vencord/discord-types";
 import { findByCodeLazy } from "@webpack";
 
 import { registerPreviewImage } from "./LocalImageActions";
@@ -12,19 +11,19 @@ import { discordImageUrl, gifUrl, previewLinks, refreshDiscordImage } from "./me
 import type { SharedKeyNative } from "./Options";
 
 const refreshAttachmentUrl = findByCodeLazy(".toURLSafe(", "?await", "??") as (url: string) => Promise<string>;
-const entries = new Map<string, { embed?: Embed; pending?: Promise<void>; expires: number; unregister?: () => void; }>();
+const entries = new Map<string, { embed?: any; pending?: Promise<void>; expires: number; unregister?: () => void; }>();
 const listeners = new Set<() => void>();
 let generation = 0;
 export function onPreviewReady(callback: () => void) { listeners.add(callback); return () => { listeners.delete(callback); }; }
 export function clearPreviewEmbeds() { generation++; entries.forEach(entry => entry.unregister?.()); entries.clear(); }
-export function cachedPreviewEmbeds(text: string): Embed[] { return previewLinks(text).flatMap(link => entries.get(link.url)?.embed ?? []); }
+export function cachedPreviewEmbeds(text: string): any[] { return previewLinks(text).flatMap(link => entries.get(link.url)?.embed ?? []); }
 
 export async function preparePreviewEmbeds(native: SharedKeyNative, text: string): Promise<void> {
     await Promise.all(previewLinks(text).map(async link => {
         const cached = entries.get(link.url);
         if (cached?.pending) return cached.pending;
         if (cached && cached.expires > Date.now()) return;
-        const entry: { embed?: Embed; pending?: Promise<void>; expires: number; unregister?: () => void; } = cached ?? { expires: 0 };
+        const entry: { embed?: any; pending?: Promise<void>; expires: number; unregister?: () => void; } = cached ?? { expires: 0 };
         if (entries.size >= 256 && !entries.has(link.url)) {
             const oldest = entries.keys().next().value!;
             entries.get(oldest)?.unregister?.(); entries.delete(oldest);
@@ -50,10 +49,12 @@ export async function preparePreviewEmbeds(native: SharedKeyNative, text: string
                 width = image.naturalWidth; height = image.naturalHeight;
             }
             if (started !== generation || !width || !height) return;
-            const media: EmbedMedia = { url: resolved.url, proxyURL: resolved.url, width, height, contentType: resolved.video ? "video/mp4" : gifUrl(resolved.url) ? "image/gif" : /\.webp(?:\?|$)/i.test(resolved.url) ? "image/webp" : "image/png", srcIsAnimated: resolved.video || gifUrl(resolved.url), flags: 0, placeholder: "", placeholderVersion: 1 };
+            // Raw gateway/API fields. Discord's own converter assigns normalized
+            // fields and determines whether this is an inline media preview.
+            const media = { url: resolved.url, proxy_url: resolved.url, width, height, content_type: resolved.video ? "video/mp4" : gifUrl(resolved.url) ? "image/gif" : /\.webp(?:\?|$)/i.test(resolved.url) ? "image/webp" : "image/png" };
             entry.unregister?.();
-            entry.unregister = resolved.video ? undefined : registerPreviewImage(resolved.url, media.contentType);
-            entry.embed = { id: "sharedkey:" + link.url, url: link.url, type: resolved.video ? "gifv" : "image", rawTitle: "", rawDescription: "", color: "", fields: [], referenceId: undefined, flags: 0, contentScanVersion: 0, ...(resolved.video ? { video: media } : { image: media }) };
+            entry.unregister = resolved.video ? undefined : registerPreviewImage(resolved.url, media.content_type);
+            entry.embed = { url: link.url, type: resolved.video ? "gifv" : "image", ...(resolved.video ? { video: media, thumbnail: { ...media, url: resolved.url, proxy_url: resolved.url } } : { thumbnail: media }) };
             entry.expires = Date.now() + 10 * 60 * 1000;
             listeners.forEach(callback => callback());
         })().catch(() => { entry.expires = Date.now() + 30000; }).finally(() => { entry.pending = undefined; });

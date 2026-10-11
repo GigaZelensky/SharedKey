@@ -10,9 +10,11 @@ import { FluxDispatcher, MessageStore, showToast } from "@webpack/common";
 
 import { EXCHANGE_PREFIX } from "./exchangeWire";
 import { cachedAttachmentInfo } from "./FileAttachments";
+import { incomingEvents, mapIncomingMessages } from "./IncomingEvents";
 import { cachedPlaintext, prepareHistory, requestPlaintext } from "./MessageView";
 import { SharedKeyNative } from "./Options";
-import { getWireMessage, rememberReference, wireMessage } from "./WireMessages";
+import { installReceiveUpdates, noteReceivedPayload, receivedPayload, refreshReceivedMessages } from "./ReceiveMessages";
+import { allWireMessages, clearWireMessages, getWireMessage, rememberIncoming, rememberReference, wasEncrypted, wireMessage } from "./WireMessages";
 
 const contexts = new Map<string, Message>();
 const edits = new Set<string>();
@@ -22,7 +24,7 @@ const NativeNotifications = findByPropsLazy("showNotification", "playNotificatio
 export function encryptedEdit(channelId: string, messageId: string): boolean {
     const view = MessageStore.getMessage(channelId, messageId);
     const stored = view ? wireMessage(view) : undefined;
-    return edits.has(`${channelId}:${messageId}`) || encrypted(stored?.content)
+    return wasEncrypted(channelId, messageId) || edits.has(`${channelId}:${messageId}`) || encrypted(stored?.content)
         || !!stored?.attachments?.some(file => cachedAttachmentInfo(channelId, file.id));
 }
 
@@ -31,7 +33,8 @@ export function installMessagePresentation(native: SharedKeyNative) {
     const originalNotification = NativeNotifications.showNotification;
     let live = true;
     let editGeneration = 0;
-    const queues = new Map<string, Promise<any>>();
+    let queue: Promise<any> | undefined;
+    let receiving = 0;
     function notificationBody(body: string, tracking: any = {}): string | Promise<string> {
         if (body.includes(EXCHANGE_PREFIX)) return "Encryption setup";
         const fragment = body.match(/\[VCS1:[A-Za-z0-9_-]+\]?/)?.[0];
@@ -57,28 +60,30 @@ export function installMessagePresentation(native: SharedKeyNative) {
         return typeof text === "string" ? deliver(text) : text.then(deliver);
     }
     NativeNotifications.showNotification = showNotification;
+    const removeUpdates = installReceiveUpdates(native, event => original.call(FluxDispatcher, event), () => receiving > 0);
     function dispatchNow(this: unknown, event: any, ...args: any[]) {
         if (!live) return original.call(this, event, ...args);
-        if (event.type === "MESSAGE_LOAD_SUCCESS" && Array.isArray(event.messages)) {
+        if (incomingEvents.has(event.type)) {
             const page: Message[] = [];
-            for (const message of event.messages) {
-                rememberReference(message, message.channel_id ?? event.channelId);
-                page.push({ ...message, channel_id: message.channel_id ?? event.channelId });
-                if (message.referenced_message) page.push({ ...message.referenced_message, channel_id: message.referenced_message.channel_id ?? message.message_reference?.channel_id ?? event.channelId });
-            }
-            const preparing = prepareHistory(native, page);
-            if (preparing) return preparing.then(() => original.call(this, event, ...args));
-        }
-        if ((event.type === "MESSAGE_CREATE" || event.type === "MESSAGE_UPDATE") && encrypted(event.message?.content)) {
-            const source = event.message;
-            const channelId = source.channel_id ?? event.channelId;
-            const author = source.author ?? getWireMessage(channelId, source.id)?.author;
-            const message = { ...source, channel_id: channelId, author } as Message;
-            if (!message.author?.id) return original.call(this, event, ...args);
-            if (contexts.size >= 500) contexts.delete(contexts.keys().next().value!);
-            contexts.set(message.content, message);
-            const preparing = prepareHistory(native, [message]);
-            if (preparing) return preparing.then(() => original.call(this, event, ...args));
+            const channelId = event.channelId ?? event.channel_id ?? event.message?.channel_id;
+            const source = mapIncomingMessages(event, channelId, (raw, channel) => {
+                const stored = getWireMessage(channel, raw.id) ?? MessageStore.getMessage(channel, raw.id);
+                const wire = rememberIncoming({ ...(stored ? { author: stored.author } : {}), ...raw }, channel);
+                if (wire.content?.startsWith("[VCS1:")) page.push(wire);
+                rememberReference(wire, channel);
+                return wire;
+            });
+            receiving++;
+            const finish = () => { receiving--; refreshReceivedMessages(); };
+            const deliver = () => {
+                try {
+                    return original.call(this, live ? mapIncomingMessages(source, channelId, (raw, channel) => { const payload = receivedPayload(raw, channel); noteReceivedPayload(payload, channel); return payload; }) : event, ...args);
+                } finally { finish(); }
+            };
+            try {
+                const preparing = prepareHistory(native, page);
+                return preparing ? preparing.then(deliver, error => { finish(); throw error; }) : deliver();
+            } catch (error) { if (receiving) finish(); throw error; }
         }
         if (event.type === "MESSAGE_END_EDIT") {
             editGeneration++;
@@ -116,20 +121,30 @@ export function installMessagePresentation(native: SharedKeyNative) {
             if (contexts.size >= 500) contexts.delete(contexts.keys().next().value!);
             contexts.set(message.content, message);
         }
-        const channelId = event.channelId ?? event.channel_id ?? event.message?.channel_id;
-        const ordered = live && channelId && ["MESSAGE_LOAD_SUCCESS", "MESSAGE_CREATE", "MESSAGE_UPDATE", "MESSAGE_DELETE", "MESSAGE_DELETE_BULK"].includes(event.type);
+        const ordered = live && (incomingEvents.has(event.type) || ["MESSAGE_DELETE", "MESSAGE_DELETE_BULK", "LOGOUT"].includes(event.type));
         if (!ordered) return dispatchNow.call(this, event, ...args);
-        const previous = queues.get(channelId);
-        const result = previous ? previous.catch(() => {}).then(() => dispatchNow.call(this, event, ...args)) : dispatchNow.call(this, event, ...args);
+        const result = queue ? queue.catch(() => {}).then(() => dispatchNow.call(this, event, ...args)) : dispatchNow.call(this, event, ...args);
         if (!result || typeof result.then !== "function") return result;
         const queued = Promise.resolve(result);
-        queues.set(channelId, queued);
-        void queued.then(() => { if (queues.get(channelId) === queued) queues.delete(channelId); }, () => { if (queues.get(channelId) === queued) queues.delete(channelId); });
+        queue = queued;
+        void queued.then(() => { if (queue === queued) queue = undefined; }, () => { if (queue === queued) queue = undefined; });
         return queued;
     }
+
     FluxDispatcher.dispatch = dispatch as typeof original;
     return () => {
         live = false;
+        removeUpdates();
+        for (const wire of allWireMessages()) {
+            const stored = MessageStore.getMessage(wire.channel_id, wire.id);
+            original.call(FluxDispatcher, { type: "MESSAGE_UPDATE", message: {
+                sharedkey_local_update: true, id: wire.id, channel_id: wire.channel_id,
+                content: wire.content, attachments: wire.attachments, embeds: wire.embeds ?? [],
+                mentions: wire.mentions ?? [], mention_everyone: wire.mention_everyone, mention_roles: wire.mention_roles,
+                pinned: stored?.pinned ?? wire.pinned, flags: stored?.flags ?? wire.flags
+            } });
+        }
+        clearWireMessages();
         editGeneration++;
         contexts.clear();
         edits.clear();

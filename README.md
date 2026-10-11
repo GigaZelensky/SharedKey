@@ -48,9 +48,11 @@ Type and attach files normally. SharedKey encrypts them before upload and displa
 
 Replies, edits, and desktop notifications use decrypted text. Images and GIFs use Discord's attachment components and media viewer. Right-click an image to copy or save it; click a document's filename to save it. The original filename is encrypted with the file contents.
 
-Mentions and replies to you keep Discord's yellow edge marker and add a subtle yellow tint over your accent. Discord receives no mention ping from encrypted text. Decrypted copies use Discord's normal message renderer, including its edit labels, reactions, attachment cards, and media viewer. Supported media links, including Discord emoji images, become native embeds after their metadata loads.
+Mentions and replies to you keep Discord's yellow edge marker and add a subtle yellow tint over your accent. Discord receives no mention ping from encrypted text. Incoming messages decrypt before Discord constructs its local message records. Discord then handles their text, edit labels, reactions, attachment cards, and media viewer. Supported media links, including Discord emoji images, become native embeds after their metadata loads.
 
-History pages decrypt before Discord receives them for display, so its message list can measure the plaintext on the first render. Original stored messages remain ciphertext; the local read model supplies the displayed content and decrypted attachment URLs.
+History text decrypts before its load event reaches Discord's stores, so the message list can measure plaintext on its first render. Discord's local records contain plaintext; SharedKey retains the original ciphertext separately for encryption guards and “View encrypted original.” Messages and attachments stored on Discord remain encrypted.
+
+Media previews still need to download or resolve metadata locally, so their dimensions can arrive after the text. SharedKey supplies raw attachment and embed data to Discord's existing conversion pipeline; it does not provide a replacement message or media renderer. Website previews that require Discord's server to read the plaintext cannot be reproduced automatically.
 
 Right-click an encrypted text message and choose **View encrypted original** to inspect its ciphertext. Turning encryption off keeps old messages readable. Replacing a key retains earlier keys for that chat.
 

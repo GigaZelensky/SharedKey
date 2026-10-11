@@ -14,6 +14,7 @@ import { joinMessageRun } from "./MessageRuns";
 import { cachedPlaintext, decryptionFailed, requestPlaintext } from "./MessageView";
 import type { SharedKeyNative } from "./Options";
 import { preparePreviewEmbeds } from "./PreviewEmbeds";
+import { receiveCachedMessage } from "./ReceiveMessages";
 import { wireMessage } from "./WireMessages";
 
 export function MessagePaint({ message, native, version }: { message: Message; native: SharedKeyNative; version: number; }) {
@@ -31,6 +32,7 @@ export function MessagePaint({ message, native, version }: { message: Message; n
     }, [wire.channel_id, version]);
     useEffect(() => {
         if (!protectedMessage) return;
+        receiveCachedMessage(message);
         const node = ref.current;
         let live = true;
         const load = () => {
@@ -61,8 +63,8 @@ export function MessagePaint({ message, native, version }: { message: Message; n
     }, [message, color, protectedMessage]);
     if (!protectedMessage) return null;
     return <span ref={ref} className="vc-sharedkey-paint">
-        {pendingFiles.map(file => <span key={file.id} className="vc-sharedkey-file-loading">
-            {attachmentError(wire.channel_id, file.id) ?? "Decrypting attachment…"}
+        {pendingFiles.filter(file => attachmentError(wire.channel_id, file.id)).map(file => <span key={file.id} className="vc-sharedkey-file-loading">
+            {attachmentError(wire.channel_id, file.id)}
             {attachmentError(wire.channel_id, file.id) && <TextButton onClick={() => { void prepareAttachmentViews(native, wire, true); }}>Retry</TextButton>}
         </span>)}
     </span>;
