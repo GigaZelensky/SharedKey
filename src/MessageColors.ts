@@ -19,3 +19,12 @@ export function messageTint(color: string, opacity: number): string {
     const hex = /^#[0-9a-f]{6}$/i.test(color) ? color : "#7d52ff";
     return `rgba(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)}, ${opacity})`;
 }
+
+export function highlightedTint(color: string, opacity: number): string {
+    const hex = /^#[0-9a-f]{6}$/i.test(color) ? color : "#7d52ff";
+    const yellow = [240, 178, 50];
+    const overlay = opacity * 0.24;
+    const alpha = overlay + opacity * (1 - overlay);
+    const rgb = [1, 3, 5].map((offset, i) => Math.round((yellow[i] * overlay + parseInt(hex.slice(offset, offset + 2), 16) * opacity * (1 - overlay)) / alpha));
+    return `rgba(${rgb.join(", ")}, ${alpha})`;
+}

@@ -5,8 +5,9 @@
  */
 
 import { findByPropsLazy } from "@webpack";
+import { showToast } from "@webpack/common";
 
-import { localImage } from "./FileAttachments";
+import { localFile, localImage } from "./FileAttachments";
 import { SharedKeyNative } from "./Options";
 
 const previews = new Map<string, { mime: string; refs: number }>();
@@ -22,6 +23,15 @@ const urls = findByPropsLazy("isDiscordAssetUrl", "toURLSafe");
 const actions = findByPropsLazy("canCopyImage", "copyImageBlob", "saveImage");
 
 export function installLocalImageActions(native: SharedKeyNative) {
+    const download = (event: MouseEvent) => {
+        const link = (event.target as Element | null)?.closest<HTMLAnchorElement>("a[href]");
+        const file = link && localFile(link.href);
+        if (!file) return;
+        if (/^(?:image|video|audio)\//.test(file.mime) && !link!.hasAttribute("download")) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        void file.blob.arrayBuffer().then(bytes => native.saveDecryptedAttachment(file.filename, new Uint8Array(bytes))).catch(() => showToast("Could not save this file."));
+    };
+    if (typeof document !== "undefined") document.addEventListener("click", download, true);
     const originalAsset = urls.isDiscordAssetUrl;
     const originalSave = actions.saveImage;
     const originalCopy = actions.copyImage;
@@ -41,6 +51,7 @@ export function installLocalImageActions(native: SharedKeyNative) {
     actions.saveImage = save;
     actions.copyImage = copy;
     return () => {
+        if (typeof document !== "undefined") document.removeEventListener("click", download, true);
         previews.clear();
         if (urls.isDiscordAssetUrl === asset) urls.isDiscordAssetUrl = originalAsset;
         if (actions.saveImage === save) actions.saveImage = originalSave;

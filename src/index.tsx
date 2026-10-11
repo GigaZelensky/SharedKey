@@ -16,14 +16,17 @@ import { ChannelStore, Menu, MessageActions, MessageStore, Modal, openModal, Rea
 
 import { bindComposerAccent } from "./ComposerAccent";
 import { EncryptionMethod, EXCHANGE_PREFIX } from "./exchangeWire";
-import { localImage } from "./FileAttachments";
+import { localImage, retryFailedAttachments } from "./FileAttachments";
 import { installLocalImageActions } from "./LocalImageActions";
+import { MessagePaint } from "./MessagePaint";
 import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
-import { clearMessageCache, EncryptedBody, rememberPlaintext } from "./MessageView";
+import { installMessageProjection, refreshProjectedMessages } from "./MessageProjection";
+import { clearMessageCache, rememberPlaintext, retryFailedMessages } from "./MessageView";
 import type * as NativeTypes from "./native";
 import { EncryptionOptions } from "./Options";
 import { installReplyPreviews, refreshReplies } from "./ReplyPreview";
 import style from "./style.css?managed";
+import { wireMessage } from "./WireMessages";
 
 const Native = VencordNative.pluginHelpers.SharedKey as PluginNative<typeof NativeTypes>;
 const subscribers = new Set<() => void>();
@@ -41,7 +44,7 @@ function initialChat(channelId: string): ChatDisplay {
 }
 function chatUpdated(channelId: string, info: { enabled: boolean; color: string; }) { rememberChat(channelId,info); refresh(); }
 
-const refresh = () => { subscribers.forEach(fn => fn()); refreshReplies(); };
+const refresh = () => { retryFailedMessages(); retryFailedAttachments(); refreshProjectedMessages(); subscribers.forEach(fn => fn()); refreshReplies(); };
 const errorText = (e: unknown) => e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "SharedKey failed. Sending was blocked.";
 let running = false;
 const restorers: (() => void)[] = [];
@@ -145,8 +148,9 @@ async function scanExchange(channelId: string) {
     // while Discord was disconnected. Older/expired packets cannot rekey.
     const messages = MessageStore.getMessages(channelId)?._array ?? [];
     for (const message of messages.slice(-50)) {
-        if (message.content?.startsWith(EXCHANGE_PREFIX)) {
-            try { await receiveAutomatic(message, true); }
+        const wire = wireMessage(message);
+        if (wire.content?.startsWith(EXCHANGE_PREFIX)) {
+            try { await receiveAutomatic(wire, true); }
             catch { /* Historical packets are expected to be expired. */ }
         }
     }
@@ -243,7 +247,7 @@ const LockButton: ChatBarButtonFactory = ({ channel, isAnyChat }) => {
 export function DecryptedMessage({ message }: { message: Message; }) {
     const version = useVersion();
     if (message.content?.startsWith(EXCHANGE_PREFIX)) return <div className="vc-sharedkey-exchange"><button type="button" onClick={() => openKeys(message.channel_id)}>Encryption setup</button></div>;
-    return <EncryptedBody message={message} native={Native} version={version} />;
+    return <MessagePaint message={message} native={Native} version={version} />;
 }
 
 async function protect(channelId: string, message: MessageObject | any, options?: any, force = false) {
@@ -317,6 +321,7 @@ export default definePlugin({
     chatBarButton: { icon: LockIcon, render: LockButton },
     contextMenus: {
         message: (children, { message }: { message: Message; }) => {
+            message = wireMessage(message);
             if (!message.content?.startsWith("[VCS1:")) return;
             const group = findGroupChildrenByChildId("copy-text", children) ?? children;
             const copyIndex = group.findIndex(item => item?.props?.id === "copy-text");
@@ -343,7 +348,7 @@ export default definePlugin({
             const channelId = SelectedChannelStore.getChannelId();
             if (channelId && ChannelStore.getChannel(channelId)?.type === 1) void scanExchange(channelId);
         }).catch(() => {});
-        restorers.push(installReplyPreviews(Native), installMessagePresentation(Native), installLocalImageActions(Native));
+        restorers.push(installMessageProjection(), installReplyPreviews(Native), installMessagePresentation(Native), installLocalImageActions(Native));
         addMessageAccessory("SharedKey", props => <ErrorBoundary noop><DecryptedMessage message={props.message} /></ErrorBoundary>, 0);
         // Guard the send/edit actions too, in case the composer patch is missing or
         // another plugin changes message content after the composer listener.

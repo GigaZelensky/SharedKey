@@ -264,6 +264,17 @@ export function decryptMessage(_: IpcMainInvokeEvent, channelId: string, authorI
     return decryptText(content, c.keys, channelId, authorId);
 }
 
+export function decryptMessages(_: IpcMainInvokeEvent, channelId: string, messages: { authorId: string; content: string; }[]) {
+    if (!Array.isArray(messages) || messages.length > 200) throw new Error("Invalid history batch.");
+    const c = config(channelId);
+    return messages.map(message => {
+        try {
+            if (!c || typeof message?.authorId !== "string" || typeof message?.content !== "string") return { error: true as const };
+            return { text: decryptText(message.content, c.keys, channelId, message.authorId) };
+        } catch { return { error: true as const }; }
+    });
+}
+
 export function verifyUpload(_: IpcMainInvokeEvent, channelId: string, bytes: Uint8Array): boolean {
     const c = config(channelId);
     if (!c?.enabled) return true;

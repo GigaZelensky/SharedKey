@@ -22,6 +22,8 @@ Keys are stored separately from Vencord's synced settings in `settings/sharedkey
 
 Other plugins and software with access to your Discord process can read drafts, decrypted content, and keys. A compromised endpoint is outside this design's protection. Text-processing plugins that send content elsewhere can also expose plaintext.
 
+The local read model returns decrypted copies from the message-store getters used by the UI. Native rendering and other plugins consuming those getters see plaintext. Original backing records and history events keep ciphertext. Encryption guards and ciphertext inspection resolve a displayed copy back to its original record, including when editing encrypted history with the chat toggle off.
+
 Decrypted attachments are held in local memory and blob URLs. Saving or copying an image places plaintext in the destination file or clipboard. The offline decryptor writes a temporary plaintext file while processing; it publishes the chosen destination only after authentication succeeds. Use an output directory you control.
 
 ## Validation and updates

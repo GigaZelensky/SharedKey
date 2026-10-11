@@ -5,6 +5,12 @@
  */
 
 export interface PreviewLink { page: boolean; url: string; }
+export function discordEmojiUrl(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return url.protocol === "https:" && !url.username && !url.password && !url.port && url.hostname === "cdn.discordapp.com" && /^\/emojis\/\d+\.(?:png|gif|webp|avif)$/i.test(url.pathname);
+    } catch { return false; }
+}
 
 export function gifUrl(value: string): boolean {
     try { return /\.gif$/i.test(decodeURIComponent(new URL(value).pathname)); }
@@ -42,7 +48,7 @@ export function previewLinks(text: string): PreviewLink[] {
             if (url.username || url.password || url.port) continue;
             const page = /^(?:www\.)?(?:tenor|klipy)\.com$/.test(url.hostname) && /^\/(?:view|gifs)\/[a-z0-9_-]+\/?$/i.test(url.pathname);
             const direct = /^(?:(?:media\d*|c)\.tenor\.com|static\d*\.klipy\.com)$/.test(url.hostname) && /\.(?:gif|webp|mp4)$/i.test(url.pathname);
-            if (page || discordImageUrl(url.href) || direct) urls.set(url.href, { page, url: url.href });
+            if (page || discordImageUrl(url.href) || discordEmojiUrl(url.href) || direct) urls.set(url.href, { page, url: url.href });
         } catch { /* Not a supported public media link. */ }
         if (urls.size === 4) break;
     }

@@ -22,6 +22,8 @@ Generated builds, dependency checkouts, test output, user vaults, and local back
 
 The plugin calls Discord's existing file, image, and media components. It does not vendor their implementations. API mocks in tests model the boundaries; they cannot guarantee compatibility with a new private Discord interface.
 
+`MessageProjection.ts` wraps message-store readers with native record/container copies; it does not mutate backing records. `WireMessages.ts` resolves those views back to the originals for guards and ciphertext inspection. `MessagePresentation.ts` primes decrypted text before delivering history and message events, preserving per-channel event order. `MessagePaint.tsx` adds only the accent and temporary attachment-loading state; Discord renders the completed message.
+
 ## Manual integration checks
 
 Use a test chat and non-sensitive files. Verify with another client that the stored content is ciphertext and each attachment is one encrypted `.vcs` file.

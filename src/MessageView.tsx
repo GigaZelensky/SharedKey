@@ -4,38 +4,82 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { Message } from "@vencord/discord-types";
-import { ReferencedMessageStore, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
+import type { Message } from "@vencord/discord-types";
 
-import { EditedMarker } from "./EditedMarker";
-import { clearAttachmentCache, encryptedAttachments, EncryptedFiles, hideEncryptedOriginals, onAttachmentReady } from "./FileAttachments";
-import { PlaintextWithPreviews, previewLinks } from "./LinkPreviews";
-import { mentionsUser } from "./localMentions";
-import { messageTint } from "./MessageColors";
-import { joinMessageRun } from "./MessageRuns";
-import { SharedKeyNative } from "./Options";
+import { clearAttachmentCache } from "./FileAttachments";
+import type { SharedKeyNative } from "./Options";
+import { clearPreviewEmbeds } from "./PreviewEmbeds";
 
 const plaintext = new Map<string, string>();
+const failures = new Set<string>();
 const pending = new Map<string, Promise<string>>();
-const colors = new Map<string, string>();
-const replyViews = new WeakSet<object>();
+const cacheListeners = new Set<() => void>();
 let generation = 0;
+export function onPlaintextReady(callback: () => void) { cacheListeners.add(callback); return () => { cacheListeners.delete(callback); }; }
+export function decryptionFailed(message: Message) { return failures.has(messageToken(message)); }
 
-export function clearMessageCache() { generation++; plaintext.clear(); pending.clear(); colors.clear(); clearAttachmentCache(); }
+export function clearMessageCache() { generation++; plaintext.clear(); failures.clear(); pending.clear(); clearAttachmentCache(); clearPreviewEmbeds(); }
+export function retryFailedMessages() { failures.clear(); }
+function messageToken(message: Message) { return `${message.channel_id}:${message.author.id}:${message.content}`; }
+function rememberFailure(token: string) {
+    if (failures.size >= 500) failures.delete(failures.values().next().value!);
+    failures.add(token);
+}
 
 export function rememberPlaintext(channelId: string, authorId: string, content: string, text: string) {
     if (plaintext.size >= 500) plaintext.delete(plaintext.keys().next().value!);
     plaintext.set(`${channelId}:${authorId}:${content}`, text);
+    failures.delete(`${channelId}:${authorId}:${content}`);
+    cacheListeners.forEach(callback => callback());
+}
+
+// Prime a history page before its original Flux event reaches Discord's stores
+// and virtual list. Wire messages remain untouched; only the local view cache is
+// filled, including failures so those rows start at their final error height.
+export function prepareHistory(native: SharedKeyNative, messages: Message[]): Promise<void> | undefined {
+    const missing = new Map<string, Message>();
+    const waits: Promise<unknown>[] = [];
+    for (const message of messages) {
+        if (!message.channel_id || !message.author?.id || !message.content?.startsWith("[VCS1:")) continue;
+        const token = messageToken(message);
+        if (!plaintext.has(token) && !failures.has(token)) {
+            const existing = pending.get(token);
+            if (existing) waits.push(existing.catch(() => {})); else missing.set(token, message);
+        }
+    }
+    if (!missing.size && !waits.length) return;
+    const started = generation;
+    const groups = new Map<string, Message[]>();
+    for (const message of missing.values()) {
+        const group = groups.get(message.channel_id) ?? [];
+        group.push(message); groups.set(message.channel_id, group);
+    }
+    return Promise.all([...waits, ...Array.from(groups, async ([channelId, group]) => {
+        for (let offset = 0; offset < group.length; offset += 200) {
+            const chunk = group.slice(offset, offset + 200);
+            if (typeof native.decryptMessages !== "function") {
+                await Promise.all(chunk.map(message => decrypt(native, message, messageToken(message)).catch(() => {})));
+                continue;
+            }
+            try {
+                const results = await native.decryptMessages(channelId, chunk.map(message => ({ authorId: message.author.id, content: message.content })));
+                if (started !== generation) return;
+                chunk.forEach((message, i) => {
+                    if (typeof results[i]?.text === "string") rememberPlaintext(channelId, message.author.id, message.content, results[i].text!);
+                    else rememberFailure(messageToken(message));
+                });
+            } catch { await Promise.all(chunk.map(message => decrypt(native, message, messageToken(message)).catch(() => {}))); }
+        }
+    })]).then(() => {});
 }
 
 export function cachedPlaintext(message: Message) { return plaintext.get(`${message.channel_id}:${message.author.id}:${message.content}`); }
 export function requestPlaintext(native: SharedKeyNative, message: Message) { return decrypt(native, message, `${message.channel_id}:${message.author.id}:${message.content}`); }
-export function markReplyView(message: Message) { replyViews.add(message); }
 
-export function imagePreviews(text: string): string[] { return previewLinks(text).filter(link => !link.page).map(link => link.url); }
 
 function decrypt(native: SharedKeyNative, message: Message, token: string): Promise<string> {
     if (plaintext.has(token)) return Promise.resolve(plaintext.get(token)!);
+    if (failures.has(token)) return Promise.reject(new Error("Unable to decrypt message."));
     let request = pending.get(token);
     if (!request) {
         const currentGeneration = generation;
@@ -43,87 +87,17 @@ function decrypt(native: SharedKeyNative, message: Message, token: string): Prom
             if (currentGeneration === generation) {
                 if (plaintext.size >= 500) plaintext.delete(plaintext.keys().next().value!);
                 plaintext.set(token, text);
+                failures.delete(token);
+                cacheListeners.forEach(callback => callback());
             }
             return text;
+        }, error => {
+            if (currentGeneration === generation) { rememberFailure(token); cacheListeners.forEach(callback => callback()); }
+            throw error;
         });
         pending.set(token, request);
         const complete = () => { if (pending.get(token) === request) pending.delete(token); };
         void request.then(complete, complete);
     }
     return request;
-}
-
-export function EncryptedBody({ message, native, version }: { message: Message; native: SharedKeyNative; version: number; }) {
-    const [, refreshFiles] = useState(0);
-    useEffect(() => onAttachmentReady(() => refreshFiles(v => v + 1)), []);
-    const token = `${message.channel_id}:${message.author.id}:${message.content}`;
-    const encrypted = message.content?.startsWith("[VCS1:");
-    const attachmentIds = encryptedAttachments(message).map(file => file.id).join(":");
-    const protectedMessage = encrypted || !!attachmentIds;
-    const reference = useStateFromStores([ReferencedMessageStore], () => message.messageReference ? ReferencedMessageStore.getMessageByReference(message.messageReference) : undefined);
-    const referenced = reference?.message;
-    const protectedReply = !!referenced && (replyViews.has(referenced) || referenced.content?.startsWith("[VCS1:") || encryptedAttachments(referenced).length > 0);
-    const [result, setResult] = useState<{ token: string; text?: string; error?: string; }>(() => ({ token, text: plaintext.get(token) }));
-    const text = plaintext.get(token) ?? (result.token === token ? result.text : undefined);
-    const userId = useStateFromStores([UserStore], () => UserStore.getCurrentUser()?.id);
-    const localMention = encrypted && !message.mentioned && mentionsUser(text, userId);
-    const [color, setColor] = useState(colors.get(message.channel_id) ?? "#7d52ff");
-    const ref = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        if (!protectedMessage && !protectedReply) return;
-        let live = true;
-        if (encrypted) void decrypt(native, message, token)
-            .then(text => { if (live) setResult({ token, text }); })
-            .catch(() => { if (live) setResult({ token, error: "Unable to decrypt. Check this chat's shared key." }); });
-        void native.channelInfo(message.channel_id).then(info => {
-            colors.set(message.channel_id, info.color);
-            if (live) setColor(info.color);
-        }).catch(() => {});
-        return () => { live = false; };
-    }, [token, attachmentIds, protectedReply, version]);
-
-    useLayoutEffect(() => {
-        const row = ref.current?.closest("li") as HTMLElement | null;
-        // Confirmation dialogs render the same message inside a div, without
-        // a chat-list li. Scope replacement to that message in either surface.
-        const surface = ref.current?.closest<HTMLElement>('[class*="message_"]') ?? row;
-        if (!surface || (!protectedMessage && !protectedReply)) return;
-        surface.classList.add("vc-sharedkey-surface");
-        if (row && protectedMessage) {
-            row.classList.add("vc-sharedkey-row");
-            row.classList.toggle("vc-sharedkey-mentioned", localMention);
-            row.dataset.sharedkeyChannel = message.channel_id;
-            row.style.setProperty("--vc-sharedkey-color", color);
-            row.style.setProperty("--vc-sharedkey-fill", messageTint(color, 0.14));
-            row.style.setProperty("--vc-sharedkey-hover", messageTint(color, 0.105));
-        }
-        const reply = surface.querySelector<HTMLElement>('[class*="repliedMessage"]');
-        if (reply && protectedReply) {
-            reply.classList.add("vc-sharedkey-reply-row");
-            reply.style.setProperty("--vc-sharedkey-fill", messageTint(color, 0.14));
-            reply.style.setProperty("--vc-sharedkey-hover", messageTint(color, 0.105));
-        }
-        const restoreRun = row && protectedMessage ? joinMessageRun(row) : () => {};
-        const restoreFileCards = hideEncryptedOriginals(surface, message);
-        return () => {
-            restoreFileCards();
-            surface.classList.remove("vc-sharedkey-surface");
-            if (reply && protectedReply) { reply.classList.remove("vc-sharedkey-reply-row"); reply.style.removeProperty("--vc-sharedkey-fill"); reply.style.removeProperty("--vc-sharedkey-hover"); }
-            row?.classList.remove("vc-sharedkey-row");
-            row?.classList.remove("vc-sharedkey-mentioned");
-            if (row) delete row.dataset.sharedkeyChannel;
-            restoreRun();
-            for (const property of ["--vc-sharedkey-color", "--vc-sharedkey-fill", "--vc-sharedkey-hover"]) row?.style.removeProperty(property);
-        };
-    }, [message.id, token, protectedMessage, protectedReply, attachmentIds, color, localMention]);
-
-    if (!protectedMessage && !protectedReply) return null;
-    return (
-        <div ref={ref} className={encrypted ? "vc-sharedkey-message" : attachmentIds ? "vc-sharedkey-attachments-only" : "vc-sharedkey-reply-anchor"}>
-            {encrypted && (text !== undefined ? text ? <PlaintextWithPreviews text={text} channelId={message.channel_id} messageId={message.id} native={native} editedTimestamp={message.editedTimestamp} /> : <EditedMarker timestamp={message.editedTimestamp} /> : result.token === token && result.error
-                ? <><span className="vc-sharedkey-error">{result.error}</span><EditedMarker timestamp={message.editedTimestamp} /></>
-                : <span className="vc-sharedkey-pending" aria-label="Decrypting encrypted message" />)}
-            <EncryptedFiles message={message} native={native} version={version} />
-        </div>
-    );
 }

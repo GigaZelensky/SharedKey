@@ -40,8 +40,6 @@
 .vc-sharedkey-lock-on { color: #7d52ff; }
 .vc-sharedkey-lock-off, .vc-sharedkey-lock-loading { color: var(--interactive-normal); }
 .vc-sharedkey-lock-error, .vc-sharedkey-error { color: var(--text-feedback-critical, var(--text-danger, #ff5c5c)); }
-.vc-sharedkey-message { padding: 0; color: var(--text-default, var(--text-normal)); }
-.vc-sharedkey-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; }
 .vc-sharedkey-appearance-row { display: flex; align-items: center; justify-content: space-between; padding: 0 0 20px; gap: 16px; }
 .vc-sharedkey-color-actions { display: flex; align-items: center; gap: 12px; }
 .vc-sharedkey-color-actions input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-subtle); border-radius: 4px; background: transparent; cursor: pointer; }
@@ -49,23 +47,12 @@
 .vc-sharedkey-row:hover { background: var(--vc-sharedkey-hover) !important; }
 .vc-sharedkey-mentioned { position: relative; }
 .vc-sharedkey-mentioned::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--background-mentioned-border, var(--text-warning, #f0b232)); pointer-events: none; z-index: 2; }
-.vc-sharedkey-plaintext { font-size: 1rem; line-height: 1.375rem; white-space: normal; }
-.vc-sharedkey-preview { display: block; width: fit-content; margin-top: 8px; }
-.vc-sharedkey-preview img, .vc-sharedkey-preview video { display: block; max-width: min(400px, 100%); max-height: 320px; border-radius: 4px; object-fit: contain; }
-.vc-sharedkey-pending { display: block; min-height: 1.375rem; }
 .vc-sharedkey-original { padding: 12px; font-family: var(--font-code); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
-:is(li, .vc-sharedkey-surface):has(.vc-sharedkey-message) [id^="message-content-"] { display: none !important; }
-.vc-sharedkey-file-list { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 4px; }
-.vc-sharedkey-decrypted-file { max-width: 100%; }
+.vc-sharedkey-decrypt-error [id^="message-content-"] { color: var(--text-feedback-critical, var(--text-danger, #ff5c5c)) !important; }
+.vc-sharedkey-paint:empty { display: none; }
 .vc-sharedkey-file-loading { display: block; padding: 8px 0; color: var(--text-muted); font-size: 13px; }
-.vc-sharedkey-file-error { display: flex; align-items: center; gap: 12px; padding: 8px 0; color: var(--text-muted); font-size: 13px; }
-.vc-sharedkey-spoiler { padding: 16px 24px; border: 0; border-radius: 4px; color: var(--text-muted); background: var(--background-secondary); cursor: pointer; }
 .vc-sharedkey-options { box-sizing: border-box; }
-.vc-sharedkey-reply-row { background: var(--vc-sharedkey-fill) !important; }
-.vc-sharedkey-reply-row:hover { background: var(--vc-sharedkey-hover) !important; }
-.vc-sharedkey-reply-marker { display: none; }
 .vc-sharedkey-settings-chat { margin: 0 0 16px; color: var(--text-muted); font-size: 14px; }
-.vc-sharedkey-reply-anchor { display: none; }
 .vc-sharedkey-row > [class*="message_"], #app-mount li.vc-sharedkey-row > [class*="message_"] { background: transparent !important; }
 .vc-sharedkey-composer .vc-sharedkey-composer-surface { background: var(--vc-sharedkey-composer-fill) !important; box-shadow: inset 0 0 0 1px var(--vc-sharedkey-composer-border) !important; border-color: var(--vc-sharedkey-composer-border) !important; }
 

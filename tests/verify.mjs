@@ -129,7 +129,7 @@ export const getIntlMessage = name => name === "MESSAGE_EDITED" ? "edited" : nam
 export const Timestamp = () => null;
 export const MessageActions = globalThis.testActions;
 export const FluxDispatcher = globalThis.testDispatcher;
-export const MessageStore = { getMessage: (channel,id) => globalThis.testMessages.get(channel+":"+id), getMessages: () => ({ _array: globalThis.testRecent ?? [] }) };
+export const MessageStore = { getMessage: (channel,id) => globalThis.testMessages.get(channel+":"+id), getMessages: () => ({ _array: globalThis.testRecent ?? [] }), emitChange: () => {} };
 export const Modal = () => null;
 export const openModal = () => {};
 export const ChannelStore = { getChannel: () => globalThis.testChannel ?? ({name: 'test chat'}) };
