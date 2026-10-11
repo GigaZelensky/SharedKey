@@ -4,6 +4,16 @@ Encrypt Discord messages and files with a shared key for each chat.
 
 SharedKey is a custom Vencord plugin for Windows desktop. Both people install it and use the same key. Discord receives encrypted text and `.vcs` files; your client decrypts them locally.
 
+## Preview
+
+Encrypted messages and the message box use your chat's accent color.
+
+![Encrypted chat with purple message backgrounds, an accented message box, and a closed lock](docs/images/chat.png)
+
+Right-click the lock to manage this chat's key, color, and file tools.
+
+<img src="docs/images/options.png" alt="Per-chat encryption options with a masked shared key, fingerprint, color control, and file tools" width="520">
+
 ## Install
 
 Install [Vencord for desktop](https://vencord.dev/download/) first.
