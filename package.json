@@ -1,0 +1,26 @@
+{
+    "name": "vencord-sharedkey",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Per-chat shared-key encryption for Vencord messages and attachments.",
+    "license": "GPL-3.0-or-later",
+    "author": "GigaZelensky",
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "test": "node tests/verify.mjs && node tests/offline-decrypt.mjs && node tests/gif-previews.mjs",
+        "test:browser": "node tests/composer.mjs && node tests/message-seams.mjs",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "stage": "node scripts/stage.mjs",
+        "check:vencord": "node scripts/vencord.mjs check",
+        "build": "node scripts/vencord.mjs build",
+        "package": "node scripts/package.mjs"
+    },
+    "devDependencies": {
+        "esbuild": "0.28.1",
+        "prettier": "3.9.10",
+        "puppeteer-core": "25.2.1"
+    }
+}

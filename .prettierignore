@@ -1,0 +1,7 @@
+src/
+LICENSE
+node_modules/
+.vencord/
+.test-output/
+artifacts/
+package-lock.json

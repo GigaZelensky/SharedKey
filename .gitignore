@@ -1,0 +1,15 @@
+node_modules/
+.vencord/
+.test-output/
+dist/
+artifacts/
+backups/
+*.vcs
+*.bin
+*.part
+*.unverified-*
+.env
+.env.*
+key.txt
+keys/
+*.log

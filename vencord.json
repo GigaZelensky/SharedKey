@@ -1,0 +1,6 @@
+{
+    "repository": "https://github.com/Vendicated/Vencord.git",
+    "commit": "16ec4ea838899706019e7f472e45f055070abeb1",
+    "pluginDirectory": "sharedKey.desktop",
+    "pnpmVersion": "11.9.0"
+}

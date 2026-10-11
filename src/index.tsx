@@ -1,0 +1,331 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
+import { findGroupChildrenByChildId } from "@api/ContextMenu";
+import { addMessageAccessory, removeMessageAccessory } from "@api/MessageAccessories";
+import { MessageObject } from "@api/MessageEvents";
+import { definePluginSettings } from "@api/Settings";
+import ErrorBoundary from "@components/ErrorBoundary";
+import definePlugin, { IconComponent, OptionType, PluginNative } from "@utils/types";
+import { CloudUpload, Message } from "@vencord/discord-types";
+import { ChannelStore, Menu, MessageActions, Modal, openModal, React, SelectedChannelStore, showToast, useCallback, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
+
+import { bindComposerAccent } from "./ComposerAccent";
+import { localImage } from "./FileAttachments";
+import { installLocalImageActions } from "./LocalImageActions";
+import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
+import { clearMessageCache, EncryptedBody, rememberPlaintext } from "./MessageView";
+import type * as NativeTypes from "./native";
+import { EncryptionOptions } from "./Options";
+import { installReplyPreviews, refreshReplies } from "./ReplyPreview";
+import style from "./style.css?managed";
+
+const Native = VencordNative.pluginHelpers.SharedKey as PluginNative<typeof NativeTypes>;
+const subscribers = new Set<() => void>();
+interface ChatDisplay { channelId: string; state: "on" | "off" | "loading" | "error"; color: string; }
+const chatDisplays = new Map<string, ChatDisplay>();
+let statesLoaded = false;
+let statesGeneration = 0;
+function rememberChat(channelId: string, info: { enabled: boolean; color: string; }) {
+    const display: ChatDisplay = { channelId, state:info.enabled ? "on" : "off", color:info.color };
+    chatDisplays.set(channelId, display);
+    return display;
+}
+function initialChat(channelId: string): ChatDisplay {
+    return chatDisplays.get(channelId) ?? { channelId, state:statesLoaded ? "off" : "loading", color:"#7d52ff" };
+}
+function chatUpdated(channelId: string, info: { enabled: boolean; color: string; }) { rememberChat(channelId,info); refresh(); }
+
+const refresh = () => { subscribers.forEach(fn => fn()); refreshReplies(); };
+const errorText = (e: unknown) => e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "SharedKey failed. Sending was blocked.";
+let running = false;
+const restorers: (() => void)[] = [];
+const encryptedUploads = new WeakMap<CloudUpload, File>();
+const uploadGuards = new WeakMap<CloudUpload, Promise<void>>();
+
+async function guardUpload(upload: CloudUpload) {
+    const info = await Native.channelInfo(upload.channelId);
+    if (!info.enabled) return;
+    const file = upload.item?.file;
+    if (file && encryptedUploads.get(upload) === file) return;
+    if (["STARTED", "UPLOADING", "COMPLETED"].includes(upload.status)) throw new Error("This attachment started uploading before encryption. Remove it and attach it again.");
+    if (!file || file.size > 64 * 1024 * 1024 + 4200) throw new Error("Encrypted uploads must be 64 MiB or smaller.");
+    const data = await Native.encryptUpload(upload.channelId, new Uint8Array(await file.arrayBuffer()), file.name);
+    const encryptedFile = new File([new Uint8Array(data).buffer], "encrypted.vcs", { type: "application/octet-stream" });
+    upload.item = { ...upload.item, file: encryptedFile };
+    (upload.item as any).imageConversionEvaluated = true;
+    (upload.item as any).compressionMetadata = undefined;
+    (upload as any).allowOptimization = false;
+    (upload as any)._originalMd5 = null;
+    upload.filename = "encrypted.vcs";
+    upload.preCompressionSize = encryptedFile.size;
+    upload.currentSize = encryptedFile.size;
+    upload.postCompressionSize = encryptedFile.size;
+    upload.contentHash = null;
+    upload.clip = undefined;
+    upload.durationSecs = undefined;
+    upload.waveform = undefined;
+    upload.description = null;
+    upload.isImage = false;
+    upload.isVideo = false;
+    upload.isThumbnail = false;
+    upload.mimeType = "application/octet-stream";
+    encryptedUploads.set(upload, encryptedFile);
+}
+
+function useVersion() {
+    const [version, setVersion] = useState(0);
+    useEffect(() => {
+        const fn = () => setVersion(v => v + 1);
+        subscribers.add(fn);
+        return () => { subscribers.delete(fn); };
+    }, []);
+    return version;
+}
+
+const LockIcon: IconComponent = ({ width = 20, height = 20, className }) => (
+    <svg width={width} height={height} viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <rect x="5" y="10" width="14" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+        <path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" stroke="currentColor" strokeWidth="2" />
+    </svg>
+);
+
+function chatName(channelId: string) {
+    const channel = ChannelStore.getChannel(channelId);
+    if (!channel) return "This chat";
+    if (channel.name) return channel.guild_id ? "#" + channel.name : channel.name;
+    const recipient = channel.recipients?.[0];
+    const user = recipient ? UserStore.getUser(recipient) : undefined;
+    return user?.globalName || user?.username || "This chat";
+}
+
+function openKeys(channelId: string) {
+    openModal(props => <EncryptionOptions channelId={channelId} channelName={chatName(channelId)} rootProps={props} native={Native} onUpdate={info => chatUpdated(channelId, info)} />);
+}
+
+function CurrentChatSettings() {
+    const channelId = useStateFromStores([SelectedChannelStore], () => SelectedChannelStore.getChannelId());
+    if (!channelId) return <p>Select a chat to configure encryption.</p>;
+    return <div className="vc-sharedkey-plugin-settings">
+        <p className="vc-sharedkey-settings-chat">{chatName(channelId)}</p>
+        <EncryptionOptions key={channelId} channelId={channelId} channelName={chatName(channelId)} rootProps={{ transitionState: 0, onClose() {} }} native={Native} onUpdate={info => chatUpdated(channelId, info)} embedded />
+    </div>;
+}
+
+const settings = definePluginSettings({ currentChat: { type: OptionType.COMPONENT, description: "Current chat", component: CurrentChatSettings } });
+
+const togglingChats = new Set<string>();
+export async function toggleChat(channelId: string) {
+    if (togglingChats.has(channelId)) return;
+    togglingChats.add(channelId);
+    refresh();
+    try {
+        const info = await Native.toggleEnabled(channelId);
+        rememberChat(channelId, info);
+        if (info.needsKey) openKeys(channelId);
+    } catch (e) { showToast(errorText(e)); }
+    finally { togglingChats.delete(channelId); refresh(); }
+}
+
+const LockButton: ChatBarButtonFactory = ({ channel, isAnyChat }) => {
+    const version = useVersion();
+    const [icon, setIcon] = useState<SVGSVGElement | null>(null);
+    const iconRef = useCallback((node: SVGSVGElement | null) => { setIcon(node); }, []);
+    const [display, setDisplay] = useState<ChatDisplay>(() => initialChat(channel.id));
+    const current = chatDisplays.get(channel.id) ?? (display.channelId === channel.id && display.state !== "loading" ? display : initialChat(channel.id));
+    const { state } = current;
+    const appearance = useRef({ enabled: state === "on", color: current.color });
+    appearance.current = { enabled: state === "on", color: current.color };
+    const binding = useRef<ReturnType<typeof bindComposerAccent> | null>(null);
+    useEffect(() => {
+        let live = true;
+        Native.channelInfo(channel.id).then(info => {
+            if (live && running) setDisplay(rememberChat(channel.id, info));
+        }).catch(() => {
+            if (live && running) {
+                const failed: ChatDisplay = { channelId:channel.id,state:"error",color:"#7d52ff" };
+                chatDisplays.set(channel.id, failed); setDisplay(failed);
+            }
+        });
+        return () => { live = false; };
+    }, [channel.id, version]);
+    // A callback ref catches delayed Tooltip/ChatBarButton mounts. Keep the
+    // binding while channel/state changes so an on-to-on switch never clears it.
+    useLayoutEffect(() => {
+        if (!icon) return;
+        const next = bindComposerAccent(icon, appearance.current);
+        binding.current = next;
+        return () => { next.dispose(); if (binding.current === next) binding.current = null; };
+    }, [icon]);
+    useLayoutEffect(() => { binding.current?.update(appearance.current); }, [channel.id, state, current.color]);
+    if (!isAnyChat) return null;
+    const busy = togglingChats.has(channel.id) || state === "loading";
+    return <ChatBarButton
+        tooltip={state === "on" ? "Disable encryption" : "Enable encryption"}
+        onClick={() => { if (!busy) void toggleChat(channel.id); }}
+        onContextMenu={e => { e.preventDefault(); openKeys(channel.id); }}
+        buttonProps={{ "aria-pressed": state === "on", "aria-disabled": busy }}
+    >
+        <svg ref={iconRef} width="20" height="20" viewBox="0 0 24 24" fill="none" className={`vc-sharedkey-lock vc-sharedkey-lock-${state}`} style={state === "on" ? { color: current.color } : undefined} aria-hidden="true">
+            <rect x="5" y="10" width="14" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+            <path className="vc-sharedkey-shackle-closed" d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" strokeWidth="2" />
+            <path className="vc-sharedkey-shackle-open" d="M8 10V7a4 4 0 0 1 8-1" stroke="currentColor" strokeWidth="2" />
+            <path d="M12 14v3" stroke="currentColor" strokeWidth="2" />
+        </svg>
+    </ChatBarButton>;
+};
+
+export function DecryptedMessage({ message }: { message: Message; }) {
+    const version = useVersion();
+    return <EncryptedBody message={message} native={Native} version={version} />;
+}
+
+async function protect(channelId: string, message: MessageObject | any, options?: any, force = false) {
+    const info = await Native.channelInfo(channelId);
+    if (!info.enabled && !force) return;
+    if (!message || typeof message.content !== "string") throw new Error("Unsupported message type in a protected chat.");
+    if (message.sticker_ids?.length || options?.stickerIds?.length || options?.alsoForwardToChannelId || message.message_snapshots?.length || message.messageSnapshots?.length || options?.scheduledTimestamp) {
+        throw new Error("Stickers, forwards and scheduled sends are not supported in protected chats.");
+    }
+    const user = UserStore.getCurrentUser();
+    if (!user) throw new Error("Cannot identify the current sender. Sending was blocked.");
+    const originalText = message.content;
+    const prepared = await Native.prepareOutgoing(channelId, user.id, originalText, user.premiumType === 2 ? 4000 : 2000, force);
+    if (!prepared.encrypted) throw new Error("Encryption settings changed during this send. Please send again.");
+    if (prepared.content !== originalText || !originalText.startsWith("[VCS1:")) rememberPlaintext(channelId, user.id, prepared.content, originalText);
+    message.content = prepared.content;
+    message.tts = false;
+    message.validNonShortcutEmojis = [];
+    message.invalidEmojis = [];
+    if (options) options.allowedMentions = { parse: [], repliedUser: false };
+    message.allowed_mentions = { parse: [], users: [], roles: [], replied_user: false };
+}
+
+export default definePlugin({
+    name: "SharedKey",
+    description: "Encrypt text and files using per-chat shared keys, with locally decrypted messages and OS protected key storage.",
+    authors: [{ name: "GigaZelensky", id: 661221372097462272n }],
+    enabledByDefault: true,
+    settings,
+    tags: ["Privacy", "Chat", "Utility"],
+    dependencies: ["MessageAccessoriesAPI"],
+    managedStyle: style,
+    isLocalImage: (src: string) => !!localImage(src),
+    patches: [{
+        // Use the native image-link labels for authenticated local images too.
+        find: "native-send-sms",
+        replacement: {
+            match: /function\((\i)\)\{(?=try\{let \i=new URL\(\1\);return"cdn.discordapp.com"===)/,
+            replace: "$&if($self.isLocalImage($1))return true;"
+        }
+    }, {
+        // Preserve local blobs when native image actions choose an original URL.
+        find: ".canSaveImage(",
+        replacement: {
+            match: /function \i\((\i),\i,\i,\i\)\{(?=let \i=\i\.\i\.toURLSafe\(\1\))/,
+            replace: "$&if($self.isLocalImage($1))return $1;"
+        }
+    }, {
+        // Discord appends media resize/format query parameters to blob URLs,
+        // which invalidates them. Keep local media URLs intact in its image loader.
+        find: "ImageLoaderUtils.getSrcWithWidthAndHeight",
+        replacement: { match: /if\((\i)\.startsWith\("data:image"\)/, replace: 'if($1.startsWith("blob:")||$1.startsWith("data:image")' }
+    }, {
+        find: "async uploadFiles(",
+        replacement: { match: /async uploadFiles\((\i)\)\{/, replace: "$&await $self.guardUploads($1);" }
+    }, {
+        find: "_uploadFileToCloud - responseUrl is not set",
+        replacement: { match: /async upload\(\)\{/, replace: "$&await $self.guardUploads([this]);" }
+    }],
+    chatBarButton: { icon: LockIcon, render: LockButton },
+    contextMenus: {
+        message: (children, { message }: { message: Message; }) => {
+            if (!message.content?.startsWith("[VCS1:")) return;
+            const group = findGroupChildrenByChildId("copy-text", children) ?? children;
+            const copyIndex = group.findIndex(item => item?.props?.id === "copy-text");
+            if (copyIndex >= 0) group[copyIndex] = React.cloneElement(group[copyIndex]!, {
+                action: async () => {
+                    try { await navigator.clipboard.writeText(await Native.decryptMessage(message.channel_id, message.author.id, message.content)); }
+                    catch (e) { showToast(errorText(e)); }
+                }
+            });
+            group.push(<Menu.MenuItem id="vc-sharedkey-original" label="View encrypted original" action={() => openModal(props => <Modal {...props} title="Encrypted original" size="md"
+                actions={[{ text: "Copy", variant: "secondary", onClick: () => { void navigator.clipboard.writeText(message.content).then(() => showToast("Ciphertext copied.")); } }]}>
+                <pre className="vc-sharedkey-original">{message.content}</pre>
+            </Modal>)} />);
+        }
+    },
+
+    start() {
+        running = true;
+        const generation = ++statesGeneration;
+        if (typeof Native.channelStates === "function") void Native.channelStates().then(states => {
+            if (!running || generation !== statesGeneration) return;
+            for (const [id, info] of Object.entries(states)) if (!chatDisplays.has(id)) rememberChat(id, info);
+            statesLoaded = true; refresh();
+        }).catch(() => {});
+        restorers.push(installReplyPreviews(Native), installMessagePresentation(Native), installLocalImageActions(Native));
+        addMessageAccessory("SharedKey", props => <ErrorBoundary noop><DecryptedMessage message={props.message} /></ErrorBoundary>, 0);
+        // Guard the send/edit actions too, in case the composer patch is missing or
+        // another plugin changes message content after the composer listener.
+        for (const name of ["sendMessage", "_sendMessage", "editMessage"]) {
+            const original = MessageActions[name];
+            if (typeof original !== "function") {
+                if (name !== "_sendMessage") throw new Error(`SharedKey cannot guard ${name}.`);
+                continue;
+            }
+            const wrapped = async function (this: unknown, ...args: any[]) {
+                if (running) {
+                    const index = name === "editMessage" ? 2 : 1;
+                    const candidate = args[index];
+                    const copy = candidate ? { ...candidate } : candidate;
+                    const options = name === "editMessage" ? undefined : (args[2] ? { ...args[2] } : {});
+                    try { await protect(args[0], copy, options, name === "editMessage" && encryptedEdit(args[0], args[1])); }
+                    catch (e) { showToast(errorText(e)); throw e; }
+                    args[index] = copy;
+                    if (name !== "editMessage") args[2] = options;
+                }
+                return original.apply(this, args);
+            };
+            MessageActions[name] = wrapped;
+            restorers.push(() => { if (MessageActions[name] === wrapped) MessageActions[name] = original; });
+        }
+    },
+    stop() {
+        running = false;
+        statesGeneration++; statesLoaded = false; chatDisplays.clear();
+        removeMessageAccessory("SharedKey");
+        clearMessageCache();
+        restorers.splice(0).reverse().forEach(fn => fn());
+        refresh();
+    },
+    async onBeforeMessageSend(channelId, message, options, props) {
+        try {
+            const info = await Native.channelInfo(channelId);
+            if (info.enabled && props.hasStickers) throw new Error("Stickers are not encrypted. Sending was blocked.");
+            await protect(channelId, message, options);
+        } catch (e) { showToast(errorText(e)); return { cancel: true }; }
+    },
+    async onBeforeMessageEdit(channelId, messageId, message) {
+        try { await protect(channelId, message, undefined, encryptedEdit(channelId, messageId)); }
+        catch (e) { showToast(errorText(e)); return { cancel: true }; }
+    },
+    async guardUploads(uploads: CloudUpload[]) {
+        if (!running) return;
+        try {
+            for (const upload of uploads) {
+                let task = uploadGuards.get(upload);
+                if (!task) { task = guardUpload(upload); uploadGuards.set(upload, task); }
+                try { await task; } finally { if (uploadGuards.get(upload) === task) uploadGuards.delete(upload); }
+            }
+        } catch (e) {
+            uploads.forEach(upload => upload.cancel());
+            showToast(errorText(e));
+            throw e;
+        }
+    }
+});
