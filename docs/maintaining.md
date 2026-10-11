@@ -10,7 +10,7 @@
 | `decrypt-file.mjs` | Streaming decoder for saved `.vcs` files            |
 | `vencord.json`     | Supported Vencord revision                          |
 
-Generated builds, dependency checkouts, test output, user vaults, and local backups are ignored. Never commit Discord credentials, shared keys, private conversation screenshots, or captured Discord bundles.
+Generated builds, dependency checkouts, test output, user vaults, and local backups are ignored. Never commit Discord credentials, shared keys, passwords, private identity keys, or captured Discord bundles. Only include screenshots explicitly selected for documentation.
 
 ## Update Vencord
 
@@ -35,6 +35,11 @@ Use a test chat and non-sensitive files. Verify with another client that the sto
 - Download an oversized incoming file as ciphertext and restore it with the offline decoder.
 - Scroll consecutive encrypted messages at 125% scaling. Watch for seams and vertical readjustments.
 - Try a wrong key and modified ciphertext. No plaintext should be returned by failed authentication.
+- In two updated clients, select Automatic in a DM and start from either side. Compare identity codes, confirm only setup packets cross Discord, then send text and files.
+- Start simultaneously, retry after a failed send, reconnect during setup, and load history after completion. Setup must converge without repeated background sends.
+- Simulate a peer reinstall. The changed identity must block automatic text/uploads until explicitly replaced; old history must remain readable.
+- Use Password on both clients with matching Unicode, whitespace and capitalization. Change it on one side and confirm wrong-key failures, then restore it.
+- Switch all three methods in a chat and check that each restores its own key. A method waiting for a key must block guarded sends.
 
 ## Writing
 

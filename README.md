@@ -1,8 +1,8 @@
 # SharedKey
 
-Encrypt Discord messages and files with a shared key for each chat.
+Encrypt Discord messages and files, with a key for each chat.
 
-SharedKey is a custom Vencord plugin for Windows desktop. Both people install it and use the same key. Discord receives encrypted text and `.vcs` files; your client decrypts them locally.
+SharedKey is a custom Vencord plugin for Windows desktop. Both people install it, then choose automatic exchange, a shared key, or a password. Discord receives encrypted text and `.vcs` files; your client decrypts them locally.
 
 ## Preview
 
@@ -25,11 +25,22 @@ To compile your own build, follow [Building SharedKey](docs/building.md). Custom
 ## Set up a chat
 
 1. Open the chat and right-click the lock beside the message box.
-2. Choose **Generate new**, then save the key. Or paste a key your friend generated.
-3. Share the key through a separate private channel. Compare the displayed fingerprint with your friend.
-4. Left-click the lock to turn encryption on or off for this chat.
+2. Choose a **Key setup** method from the options below.
+3. Finish setup on both computers, then type and attach files normally.
 
-A closed, colored lock means encryption is on. The message box uses the same accent. A gray, open lock means it is off. Settings and keys are saved separately for each chat; you can also manage the current chat from SharedKey's plugin settings.
+| Method     | Setup                                                                                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automatic  | In a one-to-one DM, both people select **Automatic**. One clicks **Start exchange**. The plugins exchange public keys and an encrypted AES key through Discord. |
+| Shared key | Generate a key or paste your friend's `vcs1_` key. Share it through a separate private channel and compare fingerprints.                                        |
+| Password   | Enter the same non-empty text on both computers, including spaces and capitalization. Share it through a separate private channel and compare fingerprints.     |
+
+Automatic remembers your friend's first identity key and refuses a different one until you approve the replacement. Compare the **Identity code** through another trusted channel to verify that first exchange, then choose **Mark as compared**. Private keys stay in your local protected vault. Setup packets appear as **Encryption setup** messages.
+
+Password mode uses PBKDF2-HMAC-SHA-256 with 600,000 iterations and a separate salt for each chat. Choose a long, unique passphrase; accepting short text does not make it resistant to guessing. The password is neither sent nor saved. The derived key is saved locally so messages can decrypt without entering it again.
+
+Switching methods restores that method's saved key and retains earlier keys for reading history. Encryption blocks sends while a newly selected method is waiting for its key. Automatic requires both people to use SharedKey 0.2.0 or newer; shared keys and passwords also work in group chats and server channels.
+
+A closed, colored lock means encryption is on. The message box uses the same accent. Left-click the lock to turn encryption on or off for this chat. A gray, open lock means it is off. Settings and keys are saved separately for each chat; you can also manage the current chat from SharedKey's plugin settings.
 
 ## Messages and files
 
@@ -52,7 +63,7 @@ Right-click an encrypted text message and choose **View encrypted original** to 
 
 Discord can still see participants, timestamps, message and file sizes, and reply relationships. Linked images and GIFs remain hosted by their original provider; previewing an encrypted link doesn't encrypt the remote resource.
 
-SharedKey uses AES-256-GCM and random 256-bit keys. It has no independent security audit or forward secrecy. Read the [security notes](SECURITY.md) before relying on it for sensitive conversations.
+SharedKey uses AES-256-GCM with random 256-bit keys or password-derived keys. It has no independent security audit or forward secrecy. Read the [security notes](SECURITY.md) before relying on it for sensitive conversations.
 
 ## Development
 

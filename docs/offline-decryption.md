@@ -2,7 +2,7 @@
 
 Incoming files larger than the 64 MiB preview limit remain encrypted when saved. Use `decrypt-file.mjs` to restore them without loading the whole file into memory.
 
-You need Node.js 24 or newer, the original shared key, and the original chat ID. Find the chat ID in the encryption options under **How to share a key**.
+You need Node.js 24 or newer, the original `vcs1_` decryption key, and the original chat ID. Find the chat ID under **Setup and decryption** in encryption options and use **Copy key for offline decryption** there. The offline script takes the derived key, not the password itself. If a file uses an earlier key, the script reports its fingerprint; select that fingerprint from the saved decryption keys before copying.
 
 ```sh
 node decrypt-file.mjs --file encrypted.vcs --channel CHAT_ID --output restored-file.zip

@@ -13,18 +13,39 @@ import { SETTINGS_DIR } from "@main/utils/constants";
 import { BrowserWindow, dialog, IpcMainInvokeEvent, safeStorage } from "electron";
 
 import { attachmentUrl, downloadEncrypted, mediaType, streamEncryptedToDisk } from "./attachmentTransport";
-import { checkId, decryptFile, decryptText, encryptFile, encryptText, FILE_MAGIC, generateKey, keyId, MAX_FILE_BYTES, parseKey, TEXT_PREFIX } from "./crypto";
+import { checkId, decryptFile, decryptText, encryptFile, encryptText, FILE_MAGIC, generateKey, keyId, MAX_FILE_BYTES, parseKey, passwordKey, TEXT_PREFIX } from "./crypto";
 import { resolveGif } from "./gifResolver";
+import { beginExchange, createExchange, exchangeFingerprint, ExchangeState, IdentityChangedError, receiveExchange, validateExchangeState } from "./keyExchange";
 
 CspPolicies["*.klipy.com"] = ["img-src", "media-src"];
 
 export async function resolveGifPreview(_: IpcMainInvokeEvent, url: string) { return resolveGif(url); }
 
-interface ChannelConfig { enabled: boolean; current: string; keys: Record<string, string>; color?: string; }
+type Method = "shared" | "automatic" | "password";
+interface ChannelConfig {
+    enabled: boolean; current: string; keys: Record<string, string>; color?: string;
+    method?: Method; methods?: Partial<Record<Method, string>>; exchange?: ExchangeState;
+}
 type Vault = Record<string, ChannelConfig>;
 const vaultPath = join(SETTINGS_DIR, "sharedkey-vault.bin");
 let vault: Vault | undefined;
 const issuedEnvelopes = new Set<string>();
+const issuedControls = new Set<string>();
+const operations = new Map<string, Promise<unknown>>();
+function serial<T>(channelId: string, fn: () => Promise<T> | T): Promise<T> {
+    checkId(channelId);
+    const next = (operations.get(channelId) ?? Promise.resolve()).catch(() => {}).then(fn);
+    operations.set(channelId, next);
+    void next.then(() => { if (operations.get(channelId) === next) operations.delete(channelId); }, () => { if (operations.get(channelId) === next) operations.delete(channelId); });
+    return next;
+}
+function issued(channelId: string, self: string, content?: string) {
+    if (content) {
+        if (issuedControls.size >= 256) issuedControls.delete(issuedControls.values().next().value!);
+        issuedControls.add(`${channelId}:${self}:${content}`);
+    }
+    return content;
+}
 
 function load(): Vault {
     if (!safeStorage.isEncryptionAvailable() || (process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text")) {
@@ -38,7 +59,11 @@ function load(): Vault {
             if (!c || typeof c.enabled !== "boolean" || typeof c.current !== "string" || !c.keys || typeof c.keys !== "object" || Array.isArray(c.keys)) throw new Error("Invalid key vault. Sending was blocked.");
             if (c.color !== undefined && !/^#[0-9a-f]{6}$/i.test(c.color)) throw new Error("Invalid message color in key vault.");
             for (const [id, key] of Object.entries(c.keys)) if (typeof key !== "string" || keyId(key) !== id) throw new Error("Invalid key vault. Sending was blocked.");
-            if (!Object.hasOwn(c.keys, c.current)) throw new Error("Invalid key vault. Sending was blocked.");
+            if (c.current && !Object.hasOwn(c.keys, c.current)) throw new Error("Invalid key vault. Sending was blocked.");
+            if (!c.current && !c.method) throw new Error("Invalid key vault. Sending was blocked.");
+            if (c.method && !["shared", "automatic", "password"].includes(c.method)) throw new Error("Invalid encryption method in key vault.");
+            if (c.methods && (typeof c.methods !== "object" || Array.isArray(c.methods) || Object.entries(c.methods).some(([mode, id]) => !["shared", "automatic", "password"].includes(mode) || typeof id !== "string" || !Object.hasOwn(c.keys, id)))) throw new Error("Invalid method keys in key vault.");
+            if (c.exchange) validateExchangeState(c.exchange);
         }
         vault = candidate;
     }
@@ -60,7 +85,16 @@ function config(channelId: string): ChannelConfig | undefined {
 
 export function channelInfo(_: IpcMainInvokeEvent, channelId: string) {
     const c = config(channelId);
-    return { enabled: c?.enabled ?? false, fingerprint: c?.current ?? "", keyCount: Object.keys(c?.keys ?? {}).length, color: c?.color ?? "#7d52ff" };
+    return {
+        enabled: c?.enabled ?? false, fingerprint: c?.current ?? "", keyCount: Object.keys(c?.keys ?? {}).length, color: c?.color ?? "#7d52ff",
+        keyIds: Object.keys(c?.keys ?? {}),
+        method: c?.method ?? "shared" as Method,
+        identityFingerprint: c?.exchange ? exchangeFingerprint(c.exchange) : "",
+        identityVerified: c?.exchange?.verified ?? false,
+        identityChanged: c?.exchange?.identityChanged ?? false,
+        exchangePending: !!c?.exchange?.pending && !c.exchange.completed.includes(c.exchange.pending.session) && c.exchange.pending.expires > Date.now(),
+        exchangeExpired: !!c?.exchange?.pending && c.exchange.pending.expires <= Date.now()
+    };
 }
 
 // Rendering hints only: never expose the saved keys through this snapshot.
@@ -77,13 +111,102 @@ export function saveKey(_: IpcMainInvokeEvent, channelId: string, key: string) {
     const all = load();
     const keys = { ...all[channelId]?.keys, [keyId(key)]: key };
     if (Object.keys(keys).length > 32) throw new Error("This chat has 32 saved keys. Use a new chat for further key rotation.");
-    persist({ ...all, [channelId]: { ...all[channelId], enabled: all[channelId]?.enabled ?? true, current: keyId(key), keys } });
+    persist({ ...all, [channelId]: { ...all[channelId], enabled: all[channelId]?.enabled ?? true, current: keyId(key), keys, method: "shared", methods: { ...methodKeys(all[channelId]), shared: keyId(key) } } });
+    return channelInfo(_, channelId);
+}
+
+function methodKeys(c?: ChannelConfig): Partial<Record<Method, string>> {
+    return { ...(c?.current ? { [c.method ?? "shared"]: c.current } : {}), ...c?.methods };
+}
+function withKey(c: ChannelConfig, method: Method, key: string): ChannelConfig {
+    const id = keyId(key);
+    const keys = { ...c.keys, [id]: key };
+    if (Object.keys(keys).length > 32) throw new Error("This chat has 32 saved keys. Use a new chat for further key rotation.");
+    return { ...c, method, current: id, keys, methods: { ...methodKeys(c), [method]: id } };
+}
+
+export function setMethod(_: IpcMainInvokeEvent, channelId: string, method: Method, self = "", peer = "") {
+    return serial(channelId, () => {
+        if (!["shared", "automatic", "password"].includes(method)) throw new Error("Invalid encryption method.");
+        const c = config(channelId) ?? { enabled: false, current: "", keys: {} };
+        let { exchange } = c;
+        if (method === "automatic") {
+            checkId(self); checkId(peer);
+            if (exchange && (exchange.self !== self || exchange.peer !== peer)) throw new Error("This chat's automatic identity belongs to a different account.");
+            exchange ??= createExchange(self, peer);
+        }
+        const methods = methodKeys(c);
+        // Guard drafts while a new method is waiting for its key.
+        persist({ ...load(), [channelId]: { ...c, method, methods, current: methods[method] ?? "", exchange, enabled: true } });
+        return channelInfo(_, channelId);
+    });
+}
+
+export function savePassword(_: IpcMainInvokeEvent, channelId: string, password: string) {
+    return serial(channelId, async () => {
+        const c = config(channelId);
+        if (!c || c.method !== "password") throw new Error("Select Password first.");
+        const key = await passwordKey(password, channelId);
+        if (config(channelId) !== c) throw new Error("Encryption changed while deriving the key. Enter the password again.");
+        persist({ ...load(), [channelId]: withKey(c, "password", key) });
+        return channelInfo(_, channelId);
+    });
+}
+
+export function startExchange(_: IpcMainInvokeEvent, channelId: string, self: string, peer: string) {
+    return serial(channelId, async () => {
+        const c = config(channelId);
+        if (!c || c.method !== "automatic" || !c.enabled || !c.exchange || c.exchange.self !== self || c.exchange.peer !== peer) throw new Error("Enable Automatic for this DM first.");
+        if (c.exchange.identityChanged) throw new IdentityChangedError();
+        // Retry the same packet while an exchange is live; never create a second
+        // simultaneous session just because a send or connection failed.
+        const p = c.exchange.pending;
+        if (p && p.expires > Date.now() && !c.exchange.completed.includes(p.session)) return { info: channelInfo(_, channelId), outgoing: issued(channelId, self, p.ack ?? p.reply ?? p.offer) };
+        const next = await beginExchange(c.exchange, channelId);
+        if (config(channelId) !== c) throw new Error("Encryption changed during setup. Start again.");
+        persist({ ...load(), [channelId]: { ...c, exchange: next.state } });
+        return { info: channelInfo(_, channelId), outgoing: issued(channelId, self, next.outgoing) };
+    });
+}
+
+export function handleExchange(_: IpcMainInvokeEvent, channelId: string, self: string, peer: string, author: string, content: string, historical = false) {
+    return serial(channelId, () => {
+        const c = config(channelId);
+        if (!c || c.method !== "automatic" || !c.enabled || !c.exchange || c.exchange.self !== self || c.exchange.peer !== peer || author !== peer) return { info: channelInfo(_, channelId), outgoing: undefined };
+        let next: ReturnType<typeof receiveExchange>;
+        try { next = receiveExchange(c.exchange, channelId, author, content); }
+        catch (e) {
+            if (e instanceof IdentityChangedError) persist({ ...load(), [channelId]: { ...c, exchange: { ...c.exchange, identityChanged: true, verified: false } } });
+            throw e;
+        }
+        if (c.exchange.identityChanged) throw new IdentityChangedError();
+        if (historical && next.state === c.exchange) return { info: channelInfo(_, channelId), outgoing: undefined };
+        let updated: ChannelConfig = { ...c, exchange: next.state };
+        if (next.key) updated = withKey(updated, "automatic", next.key);
+        persist({ ...load(), [channelId]: updated });
+        return { info: channelInfo(_, channelId), outgoing: issued(channelId, self, next.outgoing) };
+    });
+}
+
+export function verifyIdentity(_: IpcMainInvokeEvent, channelId: string, fingerprint: string) {
+    const c = config(channelId);
+    if (!c?.exchange || c.exchange.identityChanged || !fingerprint || exchangeFingerprint(c.exchange) !== fingerprint) throw new Error("The identity changed. Compare the current code first.");
+    persist({ ...load(), [channelId]: { ...c, exchange: { ...c.exchange, verified: true } } });
+    return channelInfo(_, channelId);
+}
+
+export function forgetPeerIdentity(_: IpcMainInvokeEvent, channelId: string) {
+    const c = config(channelId);
+    if (!c?.exchange) throw new Error("No automatic identity for this chat.");
+    const methods = { ...methodKeys(c) };
+    delete methods.automatic;
+    persist({ ...load(), [channelId]: { ...c, methods, current: c.method === "automatic" ? "" : c.current, exchange: { ...c.exchange, peerIdentity: undefined, verified: false, identityChanged: false, pending: undefined } } });
     return channelInfo(_, channelId);
 }
 
 export function setEnabled(_: IpcMainInvokeEvent, channelId: string, enabled: boolean) {
     const c = config(channelId);
-    if (!c) throw new Error("Save a shared key first.");
+    if (!c) throw new Error("Choose an encryption method first.");
     persist({ ...load(), [channelId]: { ...c, enabled: Boolean(enabled) } });
     return channelInfo(_, channelId);
 }
@@ -102,17 +225,20 @@ export function setColor(_: IpcMainInvokeEvent, channelId: string, color: string
     return channelInfo(_, channelId);
 }
 
-export function revealKey(_: IpcMainInvokeEvent, channelId: string): string {
+export function revealKey(_: IpcMainInvokeEvent, channelId: string, id = ""): string {
     const c = config(channelId);
-    return c?.keys[c.current] ?? "";
+    if (id && !/^[0-9a-f]{16}$/.test(id)) throw new Error("Invalid key fingerprint.");
+    return c?.keys[id || c.current] ?? "";
 }
 
 export function prepareOutgoing(_: IpcMainInvokeEvent, channelId: string, authorId: string, content: string, maxLength = 2000, forceEncrypted = false) {
     const c = config(channelId);
+    if (issuedControls.has(`${channelId}:${authorId}:${content}`)) return { content, encrypted: true };
     if (!c?.enabled && !forceEncrypted) return { content, encrypted: false };
     if (!c) throw new Error("This chat's key is missing. Editing was blocked.");
+    if (c.method === "automatic" && c.exchange?.identityChanged) throw new IdentityChangedError();
     checkId(authorId);
-    if (!c.keys[c.current]) throw new Error("This chat's key is missing. Sending was blocked.");
+    if (!c.keys[c.current]) throw new Error("Finish encryption setup in this chat before sending.");
     // Empty captions contain no data. Leave file-only sends file-only instead
     // of attaching an authenticated but unnecessary empty-text envelope.
     if (content === "") return { content: "", encrypted: true };
@@ -141,6 +267,8 @@ export function decryptMessage(_: IpcMainInvokeEvent, channelId: string, authorI
 export function verifyUpload(_: IpcMainInvokeEvent, channelId: string, bytes: Uint8Array): boolean {
     const c = config(channelId);
     if (!c?.enabled) return true;
+    if (c.method === "automatic" && c.exchange?.identityChanged) throw new IdentityChangedError();
+    if (!c.keys[c.current]) throw new Error("Finish encryption setup in this chat before uploading.");
     decryptFile(Buffer.from(bytes), c.keys, channelId);
     return true;
 }
@@ -148,6 +276,8 @@ export function verifyUpload(_: IpcMainInvokeEvent, channelId: string, bytes: Ui
 export function encryptUpload(_: IpcMainInvokeEvent, channelId: string, bytes: Uint8Array, filename: string): Uint8Array {
     const c = config(channelId);
     if (!c?.enabled) throw new Error("Encryption changed during this upload. Please attach the file again.");
+    if (c.method === "automatic" && c.exchange?.identityChanged) throw new IdentityChangedError();
+    if (!c.keys[c.current]) throw new Error("Finish encryption setup in this chat before uploading.");
     const data = Buffer.from(bytes);
     // Recognize already-encrypted copies by authentication, not their extension.
     try { decryptFile(data, c.keys, channelId); return new Uint8Array(data); }
@@ -192,7 +322,8 @@ export async function saveDecryptedAttachment(e: IpcMainInvokeEvent, filename: s
 
 export async function fileTool(e: IpcMainInvokeEvent, channelId: string, decrypt: boolean) {
     const c = config(channelId);
-    if (!c?.keys[c.current]) throw new Error("Save a shared key for this chat first.");
+    if (!c || (decrypt ? !Object.keys(c.keys).length : !c.keys[c.current])) throw new Error("Finish key setup for this chat first.");
+    if (!decrypt && c.method === "automatic" && c.exchange?.identityChanged) throw new IdentityChangedError();
     const window = windowFor(e);
     const selection = await dialog.showOpenDialog(window, {
         title: decrypt ? "Select a downloaded encrypted .vcs file" : "Select a file to encrypt locally",

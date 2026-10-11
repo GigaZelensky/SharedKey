@@ -7,6 +7,7 @@
 import { Message } from "@vencord/discord-types";
 import { FluxDispatcher, MessageStore, showToast } from "@webpack/common";
 
+import { EXCHANGE_PREFIX } from "./exchangeWire";
 import { cachedAttachmentInfo } from "./FileAttachments";
 import { cachedPlaintext, requestPlaintext } from "./MessageView";
 import { SharedKeyNative } from "./Options";
@@ -41,6 +42,7 @@ export function installMessagePresentation(native: SharedKeyNative) {
         if (event.type === "MESSAGE_START_EDIT") {
             const sequence = ++editGeneration;
             const stored = MessageStore.getMessage(event.channelId, event.messageId);
+            if (stored?.content?.startsWith(EXCHANGE_PREFIX)) { showToast("Setup messages cannot be edited. Start a new exchange in encryption options."); return; }
             const content = encrypted(event.content) ? event.content : stored?.content;
             if (encrypted(content)) {
                 const message = stored ? { ...stored, content } as Message : contexts.get(content);
@@ -52,6 +54,9 @@ export function installMessagePresentation(native: SharedKeyNative) {
                     if (live && sequence === editGeneration) return original.call(this, { ...event, content: text }, ...args);
                 }).catch(() => { if (live) showToast("Check this chat's key before editing this message."); });
             }
+        }
+        if (event.type === "NOTIFICATION_CREATE" && typeof event.body === "string" && event.body.includes(EXCHANGE_PREFIX)) {
+            return original.call(this, { ...event, body: "Encryption setup" }, ...args);
         }
         if (event.type === "NOTIFICATION_CREATE" && typeof event.body === "string" && event.body.includes("[VCS1:")) {
             const fragment = event.body.match(/\[VCS1:[A-Za-z0-9_-]+\]?/)?.[0];

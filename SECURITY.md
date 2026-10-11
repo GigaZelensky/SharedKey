@@ -4,9 +4,15 @@ SharedKey encrypts message text and file contents before they leave the client. 
 
 ## Trust model
 
-Anyone with a chat's shared key can decrypt its data and create ciphertext. Share keys through a separate private channel and compare fingerprints. The fingerprint is a short SHA-256 key identifier, not a proof of your friend's identity.
+Anyone with a chat's shared key can decrypt its data and create ciphertext. In manual mode, share keys through a separate private channel and compare fingerprints. The message-key fingerprint is a short SHA-256 key identifier, not a proof of your friend's identity.
 
-Text authentication binds data to the channel and sender ID. File authentication binds data to the channel. Sender identity still depends on Discord's account system. SharedKey does not provide forward secrecy or replay prevention. Retained keys allow old messages to remain readable, including after a key is exposed.
+Automatic exchange is available in opted-in one-to-one DMs. It uses an ephemeral RSA-3072 key with OAEP-SHA-256 to transfer a random AES key, Ed25519 identities to sign the handshake, and HMAC-SHA-256 confirmations bound to its transcript. Messages include the chat, sender, recipient, random session identifier, and a ten-minute expiry. Private keys and pending secrets remain in the OS-protected vault. Setup is blocked until key confirmation completes; an existing automatic key remains usable during rotation.
+
+The first peer identity is trusted on first use. Signatures do not prove that this first key belongs to the intended person. An active intermediary controlling Discord could substitute identities during an unverified first exchange. Comparing the full 256-bit identity code through an independently authenticated channel detects this substitution. A validly signed packet from a different pinned identity blocks new automatic text and uploads until the user explicitly approves replacement; this state survives a restart. Approval clears verification and requires a new comparison. Resetting a peer does not delete historical decryption keys.
+
+Password mode accepts 1–4096 UTF-8 bytes, including whitespace, without trimming or Unicode normalization. PBKDF2-HMAC-SHA-256 derives 32 bytes using 600,000 iterations and a public, domain-separated salt unique to the channel. The password is not persisted or transmitted. The derived key is retained in the vault. An observer can test guesses offline against ciphertext or its key identifier; weak passwords remain weak despite key stretching. Share passwords confidentially and use long, unique passphrases.
+
+Text authentication binds data to the channel and sender ID. File authentication binds data to the channel. Sender identity still depends on Discord's account system, and a holder of a chat key can construct ciphertext for another sender ID. SharedKey does not provide forward secrecy or replay prevention for ordinary messages. The setup handshake rejects expired and previously completed sessions, but it is not a ratcheting messaging protocol. Retained keys allow old messages to remain readable, including after a key is exposed.
 
 Discord and other observers can see participants, timestamps, ciphertext sizes, upload sizes, and reply relationships. Voice, video, screen sharing, reactions, and application commands are not encrypted by this plugin.
 

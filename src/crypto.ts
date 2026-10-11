@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, pbkdf2, randomBytes } from "node:crypto";
 
 export const TEXT_PREFIX = "[VCS1:";
 export const FILE_MAGIC = Buffer.from("VCSFILE1");
@@ -14,6 +14,16 @@ const KEY_PREFIX = "vcs1_";
 
 export function generateKey(): string {
     return KEY_PREFIX + randomBytes(32).toString("base64url");
+}
+
+export async function passwordKey(password: string, channelId: string): Promise<string> {
+    checkId(channelId);
+    if (typeof password !== "string" || !password.length || Buffer.byteLength(password, "utf8") > 4096) throw new Error("Enter a password of 1–4096 UTF-8 bytes.");
+    // Preserve case, whitespace and Unicode as entered. Only the derived key is
+    // retained, and each chat has a distinct, public, domain-separated salt.
+    const salt = createHash("sha256").update(JSON.stringify(["VencordSharedKey-password", 1, channelId])).digest();
+    const derived = await new Promise<Buffer>((resolve, reject) => pbkdf2(Buffer.from(password, "utf8"), salt, 600000, 32, "sha256", (error, key) => error ? reject(error) : resolve(key)));
+    return KEY_PREFIX + derived.toString("base64url");
 }
 
 export function parseKey(value: string): Buffer {

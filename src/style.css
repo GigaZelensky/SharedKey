@@ -1,5 +1,13 @@
 .vc-sharedkey-options { color: var(--text-default, var(--text-normal)); font-family: var(--font-primary); font-size: 14px; line-height: 1.4; }
 .vc-sharedkey-options p { margin: 0; }
+.vc-sharedkey-method { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 16px; }
+.vc-sharedkey-method label { font-weight: 500; }
+.vc-sharedkey-offline-key { margin-top: 12px; padding-bottom: 8px; flex-wrap: wrap; }
+.vc-sharedkey-method select { font: inherit; color: inherit; background: var(--input-background, var(--background-secondary)); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 6px 8px; }
+.vc-sharedkey-identity { display: block; margin-top: 8px; font-family: var(--font-code); font-size: 12px; overflow-wrap: anywhere; user-select: text; }
+.vc-sharedkey-exchange { color: var(--text-muted); font-size: 13px; }
+.vc-sharedkey-exchange button { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+:is(li, [class*="message_"]):has(.vc-sharedkey-exchange) [id^="message-content-"] { display: none !important; }
 .vc-sharedkey-toggle-row { padding-bottom: 20px; }
 .vc-sharedkey-toggle-row .vc-form-switch-wrapper { display: block; margin: 0; }
 .vc-sharedkey-toggle-row .vc-form-switch-text { gap: 4px; }

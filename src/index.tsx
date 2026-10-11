@@ -12,9 +12,10 @@ import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import definePlugin, { IconComponent, OptionType, PluginNative } from "@utils/types";
 import { CloudUpload, Message } from "@vencord/discord-types";
-import { ChannelStore, Menu, MessageActions, Modal, openModal, React, SelectedChannelStore, showToast, useCallback, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
+import { ChannelStore, Menu, MessageActions, MessageStore, Modal, openModal, React, SelectedChannelStore, showToast, useCallback, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
 
 import { bindComposerAccent } from "./ComposerAccent";
+import { EncryptionMethod, EXCHANGE_PREFIX } from "./exchangeWire";
 import { localImage } from "./FileAttachments";
 import { installLocalImageActions } from "./LocalImageActions";
 import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
@@ -46,10 +47,13 @@ let running = false;
 const restorers: (() => void)[] = [];
 const encryptedUploads = new WeakMap<CloudUpload, File>();
 const uploadGuards = new WeakMap<CloudUpload, Promise<void>>();
+const seenExchanges = new Set<string>();
 
 async function guardUpload(upload: CloudUpload) {
     const info = await Native.channelInfo(upload.channelId);
     if (!info.enabled) return;
+    if (info.identityChanged) throw new Error("Your friend's identity key changed. Approve the replacement in encryption options before uploading.");
+    if (info.method && !info.fingerprint) throw new Error("Finish encryption setup in this chat before uploading.");
     const file = upload.item?.file;
     if (file && encryptedUploads.get(upload) === file) return;
     if (["STARTED", "UPLOADING", "COMPLETED"].includes(upload.status)) throw new Error("This attachment started uploading before encryption. Remove it and attach it again.");
@@ -104,7 +108,64 @@ function chatName(channelId: string) {
 }
 
 function openKeys(channelId: string) {
-    openModal(props => <EncryptionOptions channelId={channelId} channelName={chatName(channelId)} rootProps={props} native={Native} onUpdate={info => chatUpdated(channelId, info)} />);
+    openModal(props => <EncryptionOptions channelId={channelId} channelName={chatName(channelId)} rootProps={props} native={Native} onMethod={method => changeMethod(channelId, method)} onExchange={() => startAutomatic(channelId)} onUpdate={info => chatUpdated(channelId, info)} />);
+}
+
+function dmParticipants(channelId: string) {
+    const channel = ChannelStore.getChannel(channelId);
+    const self = UserStore.getCurrentUser()?.id;
+    if (!self || channel?.type !== 1 || channel.recipients?.length !== 1 || channel.recipients[0] === self) throw new Error("Automatic exchange is available in one-to-one DMs. Use a shared key or password in other chats.");
+    return { self, peer: channel.recipients[0] };
+}
+
+async function sendExchange(channelId: string, content?: string) {
+    if (!content || !running) return;
+    await MessageActions.sendMessage(channelId, { content, tts: false, validNonShortcutEmojis: [], invalidEmojis: [] }, true, { allowedMentions: { parse: [], repliedUser: false } });
+}
+
+async function receiveAutomatic(message: Message, historical = false) {
+    if (!running || !message.content?.startsWith(EXCHANGE_PREFIX)) return;
+    const { self, peer } = dmParticipants(message.channel_id);
+    if (message.author.id !== peer) return;
+    const token = `${message.channel_id}:${message.id}`;
+    if (seenExchanges.has(token)) return;
+    if (seenExchanges.size >= 500) seenExchanges.delete(seenExchanges.values().next().value!);
+    seenExchanges.add(token);
+    let result: Awaited<ReturnType<typeof Native.handleExchange>>;
+    try { result = await Native.handleExchange(message.channel_id, self, peer, message.author.id, message.content, historical); }
+    catch (e) { seenExchanges.delete(token); throw e; }
+    if (result.info.method !== "automatic" || !result.info.enabled) seenExchanges.delete(token);
+    if (!running) return;
+    chatUpdated(message.channel_id, result.info);
+    await sendExchange(message.channel_id, result.outgoing);
+}
+
+async function scanExchange(channelId: string) {
+    // Recover a live handshake received before the user selected Automatic or
+    // while Discord was disconnected. Older/expired packets cannot rekey.
+    const messages = MessageStore.getMessages(channelId)?._array ?? [];
+    for (const message of messages.slice(-50)) {
+        if (message.content?.startsWith(EXCHANGE_PREFIX)) {
+            try { await receiveAutomatic(message, true); }
+            catch { /* Historical packets are expected to be expired. */ }
+        }
+    }
+}
+
+async function changeMethod(channelId: string, method: EncryptionMethod) {
+    const participants = method === "automatic" ? dmParticipants(channelId) : undefined;
+    const info = await Native.setMethod(channelId, method, participants?.self, participants?.peer);
+    chatUpdated(channelId, info);
+    if (method === "automatic") await scanExchange(channelId);
+    return Native.channelInfo(channelId);
+}
+
+async function startAutomatic(channelId: string) {
+    const { self, peer } = dmParticipants(channelId);
+    const result = await Native.startExchange(channelId, self, peer);
+    chatUpdated(channelId, result.info);
+    await sendExchange(channelId, result.outgoing);
+    return Native.channelInfo(channelId);
 }
 
 function CurrentChatSettings() {
@@ -112,7 +173,7 @@ function CurrentChatSettings() {
     if (!channelId) return <p>Select a chat to configure encryption.</p>;
     return <div className="vc-sharedkey-plugin-settings">
         <p className="vc-sharedkey-settings-chat">{chatName(channelId)}</p>
-        <EncryptionOptions key={channelId} channelId={channelId} channelName={chatName(channelId)} rootProps={{ transitionState: 0, onClose() {} }} native={Native} onUpdate={info => chatUpdated(channelId, info)} embedded />
+        <EncryptionOptions key={channelId} channelId={channelId} channelName={chatName(channelId)} rootProps={{ transitionState: 0, onClose() {} }} native={Native} onMethod={method => changeMethod(channelId, method)} onExchange={() => startAutomatic(channelId)} onUpdate={info => chatUpdated(channelId, info)} embedded />
     </div>;
 }
 
@@ -181,6 +242,7 @@ const LockButton: ChatBarButtonFactory = ({ channel, isAnyChat }) => {
 
 export function DecryptedMessage({ message }: { message: Message; }) {
     const version = useVersion();
+    if (message.content?.startsWith(EXCHANGE_PREFIX)) return <div className="vc-sharedkey-exchange"><button type="button" onClick={() => openKeys(message.channel_id)}>Encryption setup</button></div>;
     return <EncryptedBody message={message} native={Native} version={version} />;
 }
 
@@ -207,13 +269,24 @@ async function protect(channelId: string, message: MessageObject | any, options?
 
 export default definePlugin({
     name: "SharedKey",
-    description: "Encrypt text and files using per-chat shared keys, with locally decrypted messages and OS protected key storage.",
+    description: "Encrypt text and files per chat with automatic key exchange, shared keys, or passwords.",
     authors: [{ name: "GigaZelensky", id: 661221372097462272n }],
     enabledByDefault: true,
     settings,
     tags: ["Privacy", "Chat", "Utility"],
     dependencies: ["MessageAccessoriesAPI"],
     managedStyle: style,
+    flux: {
+        MESSAGE_CREATE({ message, optimistic }: { message: Message; optimistic?: boolean; }) {
+            if (optimistic || !message.content?.startsWith(EXCHANGE_PREFIX) || !running) return;
+            const channel = ChannelStore.getChannel(message.channel_id);
+            if (channel?.type !== 1 || message.author.id === UserStore.getCurrentUser()?.id) return;
+            void receiveAutomatic(message).catch(e => showToast(errorText(e)));
+        },
+        MESSAGE_LOAD_SUCCESS({ channelId }: { channelId: string; }) {
+            if (running && ChannelStore.getChannel(channelId)?.type === 1) void scanExchange(channelId);
+        }
+    },
     isLocalImage: (src: string) => !!localImage(src),
     patches: [{
         // Use the native image-link labels for authenticated local images too.
@@ -267,6 +340,8 @@ export default definePlugin({
             if (!running || generation !== statesGeneration) return;
             for (const [id, info] of Object.entries(states)) if (!chatDisplays.has(id)) rememberChat(id, info);
             statesLoaded = true; refresh();
+            const channelId = SelectedChannelStore.getChannelId();
+            if (channelId && ChannelStore.getChannel(channelId)?.type === 1) void scanExchange(channelId);
         }).catch(() => {});
         restorers.push(installReplyPreviews(Native), installMessagePresentation(Native), installLocalImageActions(Native));
         addMessageAccessory("SharedKey", props => <ErrorBoundary noop><DecryptedMessage message={props.message} /></ErrorBoundary>, 0);
@@ -281,13 +356,14 @@ export default definePlugin({
             const wrapped = async function (this: unknown, ...args: any[]) {
                 if (running) {
                     const index = name === "editMessage" ? 2 : 1;
+                    const optionsIndex = name === "sendMessage" ? 3 : 2;
                     const candidate = args[index];
                     const copy = candidate ? { ...candidate } : candidate;
-                    const options = name === "editMessage" ? undefined : (args[2] ? { ...args[2] } : {});
+                    const options = name === "editMessage" ? undefined : (args[optionsIndex] ? { ...args[optionsIndex] } : {});
                     try { await protect(args[0], copy, options, name === "editMessage" && encryptedEdit(args[0], args[1])); }
                     catch (e) { showToast(errorText(e)); throw e; }
                     args[index] = copy;
-                    if (name !== "editMessage") args[2] = options;
+                    if (name !== "editMessage") args[optionsIndex] = options;
                 }
                 return original.apply(this, args);
             };
@@ -297,7 +373,7 @@ export default definePlugin({
     },
     stop() {
         running = false;
-        statesGeneration++; statesLoaded = false; chatDisplays.clear();
+        statesGeneration++; statesLoaded = false; chatDisplays.clear(); seenExchanges.clear();
         removeMessageAccessory("SharedKey");
         clearMessageCache();
         restorers.splice(0).reverse().forEach(fn => fn());

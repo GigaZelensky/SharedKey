@@ -30,7 +30,7 @@ if (!options["--file"] || !options["--channel"] || !options["--output"]) {
 }
 const channel = options["--channel"];
 if (!/^\d{5,22}$/.test(channel))
-    throw new Error("Invalid chat ID. Find it in the chat encryption options under How to share a key.");
+    throw new Error("Invalid chat ID. Find it in the chat encryption options under Setup and decryption.");
 const input = resolve(options["--file"]);
 const output = resolve(options["--output"]);
 const temporary = output + ".unverified-" + randomUUID();
@@ -82,7 +82,9 @@ async function main() {
     if (header.subarray(0, 8).toString() !== "VCSFILE1") throw new Error("Not a SharedKey .vcs file.");
     const id = header.subarray(8, 16);
     if (!createHash("sha256").update(raw).digest().subarray(0, 8).equals(id))
-        throw new Error("This file uses a different shared key.");
+        throw new Error(
+            `This file needs key ${id.toString("hex")}. Select that fingerprint under Setup and decryption.`,
+        );
     const aad = Buffer.from(JSON.stringify(["VencordSharedKey", 1, "file", channel, ""]));
     const cipher = createDecipheriv(
         "aes-256-gcm",

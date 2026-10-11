@@ -125,10 +125,10 @@ export const findComponentLazy = () => () => null;
 export const findByPropsLazy = (...props) => props.includes("isDiscordAssetUrl") ? globalThis.testUrls : globalThis.testImageActions;
 export const MessageActions = globalThis.testActions;
 export const FluxDispatcher = globalThis.testDispatcher;
-export const MessageStore = { getMessage: (channel,id) => globalThis.testMessages.get(channel+":"+id) };
+export const MessageStore = { getMessage: (channel,id) => globalThis.testMessages.get(channel+":"+id), getMessages: () => ({ _array: globalThis.testRecent ?? [] }) };
 export const Modal = () => null;
 export const openModal = () => {};
-export const ChannelStore = { getChannel: () => ({name: 'test chat'}) };
+export const ChannelStore = { getChannel: () => globalThis.testChannel ?? ({name: 'test chat'}) };
 export const SelectedChannelStore = { getChannelId: () => "${channel}" };
 export const showToast = text => globalThis.toasts.push(text);
 export const UserStore = { getCurrentUser: () => ({ id: "${author}", premiumType: 0 }) };
@@ -297,10 +297,14 @@ check("Uncached reply resolves to decrypted text while stores retain original", 
     );
     assert.equal(testReference.message.content, coldCiphertext);
 });
-await testActions.sendMessage(channel, message, options);
+await testActions.sendMessage(channel, message, true, options);
 check("Final guard does not double-encrypt", () =>
     assert.equal(sent.at(-1).args[1].content, message.content),
 );
+check("Public send preserves waitForChannelReady and guards the fourth options argument", () => {
+    assert.equal(sent.at(-1).args[2], true);
+    assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], repliedUser: false });
+});
 await testActions._sendMessage(channel, msg(), {});
 check("Direct sends through private action are encrypted", () =>
     assert.equal(crypto.decryptText(sent.at(-1).args[1].content, keys, channel, author), "secret text"),
@@ -393,6 +397,30 @@ check("Completed upload encrypted by this build is not replaced after upload", (
     assert.equal(zipUpload.item.file, alreadyEncryptedFile);
     assert.deepEqual(repeatedZipBytes, uploadedZip);
 });
+const originalUploadInfo = VencordNative.pluginHelpers.SharedKey.channelInfo;
+VencordNative.pluginHelpers.SharedKey.channelInfo = async () => ({
+    enabled: true,
+    method: "automatic",
+    fingerprint: "saved",
+    identityChanged: true,
+});
+await assert.rejects(() => plugin.guardUploads([zipUpload]), /identity key changed/);
+check("A changed identity blocks an already-prepared upload before its cached fast path", () => {
+    assert.equal(cancelled, true);
+    assert.equal(zipUpload.item.file, alreadyEncryptedFile);
+});
+cancelled = false;
+VencordNative.pluginHelpers.SharedKey.channelInfo = async () => ({
+    enabled: true,
+    method: "password",
+    fingerprint: "",
+});
+await assert.rejects(() => plugin.guardUploads([zipUpload]), /Finish encryption setup/);
+check("Switching to an unconfigured method also blocks prepared uploads", () =>
+    assert.equal(cancelled, true),
+);
+cancelled = false;
+VencordNative.pluginHelpers.SharedKey.channelInfo = originalUploadInfo;
 const directPatch = plugin.patches.find((p) => p.find === "_uploadFileToCloud - responseUrl is not set");
 const directMethod =
     'async upload(){this.status="STARTED";this.sentBytes=new Uint8Array(await this.item.file.arrayBuffer());this.status="COMPLETED";}';
@@ -526,6 +554,71 @@ testDispatcher.dispatch(ordinaryNotification);
 check("Ordinary notification dispatch is unchanged and synchronous", () =>
     assert.equal(events.at(-1), ordinaryNotification),
 );
+const setupWire = "[VCKX1:PUBLIC_SETUP_PACKET]";
+testDispatcher.dispatch({ ...ordinaryNotification, body: setupWire });
+check("Setup notifications never expose wire packets", () =>
+    assert.equal(events.at(-1).body, "Encryption setup"),
+);
+globalThis.testReference = { state: 0, message: { ...receive, content: setupWire, attachments: [] } };
+check("Setup reply excerpts use a short label without mutating the original", () => {
+    assert.equal(testReplyStore.getMessage(channel, receive.id).message.content, "Encryption setup");
+    assert.equal(testReference.message.content, setupWire);
+});
+testMessages.set(channel + ":" + receive.id, { ...receive, content: setupWire });
+const editsBefore = events.length;
+testDispatcher.dispatch({
+    type: "MESSAGE_START_EDIT",
+    channelId: channel,
+    messageId: receive.id,
+    content: setupWire,
+});
+check("Setup packets cannot be edited into an invalid handshake", () =>
+    assert.equal(events.length, editsBefore),
+);
+enabled = true;
+globalThis.testChannel = { type: 1, recipients: ["345678901234567890"] };
+const controlMessage = {
+    ...receive,
+    id: "456789012345678999",
+    content: setupWire,
+    author: { id: "345678901234567890" },
+};
+const generatedControl = "[VCKX1:ISSUED_SETUP_PACKET]";
+const protocolCalls = [];
+const helper = VencordNative.pluginHelpers.SharedKey;
+helper.handleExchange = async (...args) => {
+    protocolCalls.push(args);
+    return { info: { enabled: true, method: "automatic", color: "#7d52ff" }, outgoing: generatedControl };
+};
+const originalPrepare = helper.prepareOutgoing;
+helper.prepareOutgoing = async (id, who, content, ...args) =>
+    content === generatedControl ? { content, encrypted: true } : originalPrepare(id, who, content, ...args);
+plugin.flux.MESSAGE_CREATE({ message: controlMessage });
+plugin.flux.MESSAGE_CREATE({ message: controlMessage });
+await new Promise(setImmediate);
+check("Incoming DM setup sends a native-issued response once through the guarded Discord action", () => {
+    assert.equal(protocolCalls.length, 1);
+    assert.deepEqual(protocolCalls[0].slice(0, 5), [
+        channel,
+        author,
+        "345678901234567890",
+        "345678901234567890",
+        setupWire,
+    ]);
+    assert.equal(sent.at(-1).args[1].content, generatedControl);
+    assert.equal(sent.at(-1).args[2], true);
+    assert.deepEqual(sent.at(-1).args[3].allowedMentions, { parse: [], repliedUser: false });
+});
+globalThis.testRecent = [controlMessage];
+plugin.flux.MESSAGE_LOAD_SUCCESS({ channelId: channel });
+plugin.flux.MESSAGE_CREATE({ message: { ...controlMessage, author: { id: author } } });
+globalThis.testChannel = { type: 0, recipients: ["345678901234567890"] };
+plugin.flux.MESSAGE_CREATE({ message: { ...controlMessage, id: "456789012345679000" } });
+await new Promise(setImmediate);
+check("History duplicates, own messages and server channels do not trigger extra setup sends", () =>
+    assert.equal(protocolCalls.length, 1),
+);
+delete globalThis.testChannel;
 plugin.stop();
 check("Disabling plugin restores notification/edit dispatch", () =>
     assert.equal(testDispatcher.dispatch, originalDispatch),

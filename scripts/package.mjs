@@ -39,6 +39,7 @@ await writeFile(
     JSON.stringify(
         {
             plugin: "SharedKey",
+            version: JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version,
             platform: "Windows desktop",
             upstreamCommit,
             buildArgs: "pnpm build --disable-updater",

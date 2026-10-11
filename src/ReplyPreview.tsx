@@ -7,6 +7,7 @@
 import { Message } from "@vencord/discord-types";
 import { ReferencedMessageStore } from "@webpack/common";
 
+import { EXCHANGE_PREFIX } from "./exchangeWire";
 import { cachedAttachmentInfo, encryptedAttachments, onAttachmentReady } from "./FileAttachments";
 import { cachedPlaintext, markReplyView, requestPlaintext } from "./MessageView";
 import { SharedKeyNative } from "./Options";
@@ -26,9 +27,10 @@ export function installReplyPreviews(native: SharedKeyNative, store = Referenced
     function project(reference: any) {
         const message: Message | undefined = reference?.message;
         const encryptedText = message?.content?.startsWith("[VCS1:");
-        if (!message || reference.state !== 0 || (!encryptedText && !encryptedAttachments(message).length)) return reference;
+        const exchange = message?.content?.startsWith(EXCHANGE_PREFIX);
+        if (!message || reference.state !== 0 || (!encryptedText && !exchange && !encryptedAttachments(message).length)) return reference;
         const token = `${message.channel_id}:${message.author.id}:${message.content}`;
-        let text = encryptedText ? cachedPlaintext(message) : message.content;
+        let text = exchange ? "Encryption setup" : encryptedText ? cachedPlaintext(message) : message.content;
         if (encryptedText && text === undefined && !requested.has(token)) {
             requested.add(token);
             void requestPlaintext(native, message).then(() => { if (live) store.emitChange(); }).catch(() => {
