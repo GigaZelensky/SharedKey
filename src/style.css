@@ -39,7 +39,7 @@
 .vc-sharedkey-options .vc-text-btn-base:disabled { cursor: default; }
 .vc-sharedkey-lock-on { color: #7d52ff; }
 .vc-sharedkey-lock-off, .vc-sharedkey-lock-loading { color: var(--interactive-normal); }
-.vc-sharedkey-lock-error, .vc-sharedkey-error { color: var(--text-danger); }
+.vc-sharedkey-lock-error, .vc-sharedkey-error { color: var(--text-feedback-critical, var(--text-danger, #ff5c5c)); }
 .vc-sharedkey-message { padding: 0; color: var(--text-default, var(--text-normal)); }
 .vc-sharedkey-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; }
 .vc-sharedkey-appearance-row { display: flex; align-items: center; justify-content: space-between; padding: 0 0 20px; gap: 16px; }
