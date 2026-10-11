@@ -7,6 +7,7 @@
 import { findByCodeLazy } from "@webpack";
 import { Parser, useEffect, useState } from "@webpack/common";
 
+import { EditedMarker } from "./EditedMarker";
 import type { GifPreview } from "./gifResolver";
 import { registerPreviewImage } from "./LocalImageActions";
 import { discordImageUrl, gifUrl, previewLinks, refreshDiscordImage } from "./mediaLinks";
@@ -52,12 +53,13 @@ function Preview({ link, native, ready }: { link: { page: boolean; url: string; 
     </div>;
 }
 
-export function PlaintextWithPreviews({ text, channelId, messageId, native }: { text: string; channelId: string; messageId: string; native: SharedKeyNative; }) {
+export function PlaintextWithPreviews({ text, channelId, messageId, native, editedTimestamp }: { text: string; channelId: string; messageId: string; native: SharedKeyNative; editedTimestamp?: Date | null; }) {
     const links = previewLinks(text);
     const [loaded, setLoaded] = useState("");
     const single = links.length === 1 && text.trim() === links[0].url && loaded === links[0].url;
     return <>
-        {!single && <div className="vc-sharedkey-plaintext">{Parser.parse(text, true, { channelId, messageId, allowLinks: true, allowHeading: true, allowList: true, allowEmojiLinks: true })}</div>}
+        {!single && <div className="vc-sharedkey-plaintext">{Parser.parse(text, true, { channelId, messageId, allowLinks: true, allowHeading: true, allowList: true, allowEmojiLinks: true })}<EditedMarker timestamp={editedTimestamp} /></div>}
         {links.map(link => <Preview key={link.url} link={link} native={native} ready={setLoaded} />)}
+        {single && <EditedMarker timestamp={editedTimestamp} />}
     </>;
 }

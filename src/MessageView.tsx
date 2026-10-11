@@ -7,6 +7,7 @@
 import { Message } from "@vencord/discord-types";
 import { ReferencedMessageStore, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
 
+import { EditedMarker } from "./EditedMarker";
 import { clearAttachmentCache, encryptedAttachments, EncryptedFiles, hideEncryptedOriginals, onAttachmentReady } from "./FileAttachments";
 import { PlaintextWithPreviews, previewLinks } from "./LinkPreviews";
 import { mentionsUser } from "./localMentions";
@@ -119,8 +120,8 @@ export function EncryptedBody({ message, native, version }: { message: Message; 
     if (!protectedMessage && !protectedReply) return null;
     return (
         <div ref={ref} className={encrypted ? "vc-sharedkey-message" : attachmentIds ? "vc-sharedkey-attachments-only" : "vc-sharedkey-reply-anchor"}>
-            {encrypted && (text !== undefined ? text ? <PlaintextWithPreviews text={text} channelId={message.channel_id} messageId={message.id} native={native} /> : null : result.token === token && result.error
-                ? <span className="vc-sharedkey-error">{result.error}</span>
+            {encrypted && (text !== undefined ? text ? <PlaintextWithPreviews text={text} channelId={message.channel_id} messageId={message.id} native={native} editedTimestamp={message.editedTimestamp} /> : <EditedMarker timestamp={message.editedTimestamp} /> : result.token === token && result.error
+                ? <><span className="vc-sharedkey-error">{result.error}</span><EditedMarker timestamp={message.editedTimestamp} /></>
                 : <span className="vc-sharedkey-pending" aria-label="Decrypting encrypted message" />)}
             <EncryptedFiles message={message} native={native} version={version} />
         </div>
