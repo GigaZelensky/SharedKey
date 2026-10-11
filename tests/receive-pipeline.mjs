@@ -209,8 +209,15 @@ const file = {
         },
     ],
 };
+model.receivedPayload(file, channel);
+assert.equal(model.wasEncrypted(channel, file.id), false, "a .vcs suffix alone is not proof of encryption");
 await model.prepareAttachmentViews(native, file);
 const fileDto = model.receivedPayload(file, channel);
+assert.equal(
+    model.wasEncrypted(channel, file.id),
+    true,
+    "authenticated decrypted file retains edit protection",
+);
 assert.equal(fileDto.attachments.length, 1);
 assert.equal(fileDto.attachments[0].filename, "photo.gif");
 assert.equal(fileDto.attachments[0].content_type, "image/gif");

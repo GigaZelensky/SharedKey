@@ -19,10 +19,12 @@ export function rememberIncoming(source: any, channelId: string): any {
     const protectedMessage = source.content?.startsWith("[VCS1:") || source.content?.startsWith("[VCKX1:") || source.attachments?.some((file: any) => /\.vcs$/i.test(file.filename));
     if (!previous && !protectedMessage) return source;
     const wire = { ...previous, ...source, channel_id: channelId };
-    originals.set(key, wire); protectedIds.add(key);
+    originals.set(key, wire);
+    if (wire.content?.startsWith("[VCS1:")) protectedIds.add(key);
     rememberReference(wire, channelId);
     return wire;
 }
+export function markProtectedMessage(channelId: string, messageId: string) { protectedIds.add(`${channelId}:${messageId}`); }
 export function wasEncrypted(channelId: string, messageId: string) { return protectedIds.has(`${channelId}:${messageId}`); }
 export function getWireMessage(channelId: string, messageId: string): Message | undefined { return originals.get(`${channelId}:${messageId}`); }
 export function wireMessage(message: Message): Message { return getWireMessage(message.channel_id, message.id) ?? message; }

@@ -12,7 +12,7 @@ import { mentionsUser } from "./localMentions";
 import { cachedPlaintext, decryptionFailed, prepareHistory } from "./MessageView";
 import type { SharedKeyNative } from "./Options";
 import { cachedPreviewEmbeds, onPreviewReady } from "./PreviewEmbeds";
-import { allWireMessages, getWireMessage, referenceAuthor, rememberIncoming, wireMessage } from "./WireMessages";
+import { allWireMessages, getWireMessage, markProtectedMessage, referenceAuthor, rememberIncoming, wireMessage } from "./WireMessages";
 
 const presented = new Map<string, { wire: string; text: string; embeds: any[]; }>();
 
@@ -37,6 +37,7 @@ export function receivedPayload(source: any, channelId: string): any {
         if (!ids.has(file.id)) return file;
         const local = attachmentView(channelId, file.id);
         if (!local) return file;
+        markProtectedMessage(channelId, wire.id);
         const url = local.url + "#" + encodeURIComponent(local.filename);
         return { ...file, filename: local.filename, url, proxy_url: url, content_type: local.mime, size: local.blob.size, width: local.width, height: local.height };
     });
