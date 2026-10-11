@@ -24,6 +24,14 @@ await build({
 });
 const kx = await import(pathToFileURL(path.join(work, "exchange.mjs")));
 const crypto = await import(pathToFileURL(path.join(work, "crypto.mjs")));
+await build({
+    entryPoints: [path.join(root, "src/localMentions.ts")],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: path.join(work, "mentions.mjs"),
+});
+const { mentionsUser } = await import(pathToFileURL(path.join(work, "mentions.mjs")));
 const channel = "123456789012345678";
 const alice = "234567890123456789";
 const bob = "345678901234567890";
@@ -34,6 +42,19 @@ async function check(label, fn) {
     checks++;
     console.log(`PASS ${label}`);
 }
+await check("Local mention detection ignores code, escaped tags and other users", () => {
+    assert.equal(mentionsUser(`<@${alice}>`, alice), true);
+    assert.equal(mentionsUser(`<@!${alice}>`, alice), true);
+    assert.equal(mentionsUser(`||<@${alice}>||`, alice), true);
+    assert.equal(mentionsUser(`<@${bob}>`, alice), false);
+    assert.equal(mentionsUser("`<@" + alice + ">`", alice), false);
+    assert.equal(mentionsUser("```\n<@" + alice + ">\n```", alice), false);
+    assert.equal(mentionsUser("\\<@" + alice + ">", alice), false);
+    assert.equal(mentionsUser("@everyone", alice), true);
+    assert.equal(mentionsUser("@here", alice), true);
+    assert.equal(mentionsUser("name@everyone", alice), false);
+    assert.equal(mentionsUser(undefined, alice), false);
+});
 function unpack(wire) {
     return JSON.parse(Buffer.from(wire.slice(kx.EXCHANGE_PREFIX.length, -1), "base64url").toString());
 }

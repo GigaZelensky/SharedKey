@@ -134,6 +134,85 @@ try {
                 }
     }
     assert.ok(oldSeams > 0, "Regression fixture reproduces the previous shadow seam");
+    await build({
+        entryPoints: [root + "/src/mediaLinks.ts"],
+        bundle: true,
+        format: "iife",
+        globalName: "mediaLinks",
+        outfile: root + "/.test-output/media-links-browser.js",
+    });
+    await page.addScriptTag({
+        content: await readFile(root + "/.test-output/media-links-browser.js", "utf8"),
+    });
+    const expired =
+        "https://cdn.discordapp.com/attachments/123456789012345678/234567890123456789/crop.gif?ex=1&hm=old";
+    const fresh = expired.replace("ex=1&hm=old", "ex=ffffffff&hm=new");
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+        if (request.url() === expired) void request.respond({ status: 403, body: "Expired signature" });
+        else if (request.url() === fresh)
+            void request.respond({
+                status: 200,
+                contentType: "image/gif",
+                body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
+            });
+        else void request.continue();
+    });
+    const decoded = await page.evaluate(
+        async ({ expired, fresh }) => {
+            const old = new Image();
+            old.src = expired;
+            let oldFailed = false;
+            try {
+                await old.decode();
+            } catch {
+                oldFailed = true;
+            }
+            const refreshed = await mediaLinks.refreshDiscordImage(expired, async () => fresh);
+            const image = new Image();
+            image.src = refreshed;
+            await image.decode();
+            return {
+                oldFailed,
+                width: image.naturalWidth,
+                height: image.naturalHeight,
+                gif: mediaLinks.gifUrl(refreshed),
+            };
+        },
+        { expired, fresh },
+    );
+    assert.deepEqual(decoded, { oldFailed: true, width: 1, height: 1, gif: true });
+    console.log(
+        "PASS an expired Discord GIF fails its original image preflight and decodes after signed-URL refresh",
+    );
+    await page.setViewport({ width: 600, height: 600, deviceScaleFactor: 1 });
+    await page.setContent(
+        `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{height:80px;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105);--vc-sharedkey-gap-fill:rgb(17,11,36);--vc-sharedkey-gap-hover:rgb(13,9,27);--vc-sharedkey-gap:16px;--vc-sharedkey-seam:2px}.native-mentioned::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:rgb(240,178,50)}</style><style>${css}</style><ol><li id=row class="vc-sharedkey-row vc-sharedkey-run-continuation vc-sharedkey-mentioned"><div class=message_native><button id=action>Message action</button></div></li><li id=native class="vc-sharedkey-row native-mentioned" style="position:relative;margin-top:16px"><div class=message_native>Native reply mention</div></li></ol>`,
+    );
+    await page.mouse.move(590, 590);
+    const resting = await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor);
+    const restingGap = await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor);
+    await page.click("#action");
+    const hovered = await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor);
+    assert.notEqual(hovered, resting);
+    await page.mouse.move(590, 590);
+    assert.equal(await page.$eval("#action", (node) => node === document.activeElement), true);
+    assert.equal(await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor), resting);
+    assert.equal(
+        await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor),
+        restingGap,
+    );
+    assert.equal(
+        await page.$eval("#row", (node) => getComputedStyle(node, "::before").backgroundColor),
+        "rgb(240, 178, 50)",
+    );
+    assert.equal(
+        await page.$eval("#native", (node) => getComputedStyle(node, "::before").backgroundColor),
+        "rgb(240, 178, 50)",
+    );
+    console.log(
+        "PASS hover clears after pointer exit with a focused action; gap tint resets and local/native yellow bars remain",
+    );
     console.log(
         `PASS ${checked} pixel cases: fractional rows, 100/125/150/200% scaling, zero/16/24px gaps, dark/light backgrounds, no dark or doubled-tint seam, foreground preserved, unchanged scroll geometry. Old shadow reproduced ${oldSeams} dark pixels.`,
     );

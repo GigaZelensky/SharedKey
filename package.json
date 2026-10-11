@@ -1,6 +1,6 @@
 {
     "name": "vencord-sharedkey",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "private": true,
     "description": "Per-chat encryption for Vencord with automatic key exchange, shared keys, and passwords.",
     "license": "GPL-3.0-or-later",

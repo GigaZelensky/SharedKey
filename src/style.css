@@ -46,8 +46,9 @@
 .vc-sharedkey-color-actions { display: flex; align-items: center; gap: 12px; }
 .vc-sharedkey-color-actions input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-subtle); border-radius: 4px; background: transparent; cursor: pointer; }
 .vc-sharedkey-row { background: var(--vc-sharedkey-fill) !important; }
-.vc-sharedkey-row:hover, .vc-sharedkey-row:focus-within { background: var(--vc-sharedkey-hover) !important; }
-.vc-sharedkey-row::before { background: var(--vc-sharedkey-color) !important; }
+.vc-sharedkey-row:hover { background: var(--vc-sharedkey-hover) !important; }
+.vc-sharedkey-mentioned { position: relative; }
+.vc-sharedkey-mentioned::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--background-mentioned-border, var(--text-warning, #f0b232)); pointer-events: none; z-index: 2; }
 .vc-sharedkey-plaintext { font-size: 1rem; line-height: 1.375rem; white-space: normal; }
 .vc-sharedkey-preview { display: block; width: fit-content; margin-top: 8px; }
 .vc-sharedkey-preview img, .vc-sharedkey-preview video { display: block; max-width: min(400px, 100%); max-height: 320px; border-radius: 4px; object-fit: contain; }
@@ -60,14 +61,12 @@
 .vc-sharedkey-file-error { display: flex; align-items: center; gap: 12px; padding: 8px 0; color: var(--text-muted); font-size: 13px; }
 .vc-sharedkey-spoiler { padding: 16px 24px; border: 0; border-radius: 4px; color: var(--text-muted); background: var(--background-secondary); cursor: pointer; }
 .vc-sharedkey-options { box-sizing: border-box; }
-.vc-sharedkey-row:hover > [class*="message_"], .vc-sharedkey-row:hover > [class*="message__"], .vc-sharedkey-row:focus-within > [class*="message_"] { background: var(--vc-sharedkey-hover) !important; }
 .vc-sharedkey-reply-row { background: var(--vc-sharedkey-fill) !important; }
 .vc-sharedkey-reply-row:hover { background: var(--vc-sharedkey-hover) !important; }
 .vc-sharedkey-reply-marker { display: none; }
-#app-mount li.vc-sharedkey-row:hover > [class*="message_"], #app-mount li.vc-sharedkey-row:focus-within > [class*="message_"] { background: var(--vc-sharedkey-hover) !important; }
 .vc-sharedkey-settings-chat { margin: 0 0 16px; color: var(--text-muted); font-size: 14px; }
 .vc-sharedkey-reply-anchor { display: none; }
-.vc-sharedkey-row > [class*="message_"], .vc-sharedkey-row:hover > [class*="message_"], .vc-sharedkey-row:focus-within > [class*="message_"], #app-mount li.vc-sharedkey-row > [class*="message_"], #app-mount li.vc-sharedkey-row:hover > [class*="message_"], #app-mount li.vc-sharedkey-row:focus-within > [class*="message_"] { background: transparent !important; }
+.vc-sharedkey-row > [class*="message_"], #app-mount li.vc-sharedkey-row > [class*="message_"] { background: transparent !important; }
 .vc-sharedkey-composer .vc-sharedkey-composer-surface { background: var(--vc-sharedkey-composer-fill) !important; box-shadow: inset 0 0 0 1px var(--vc-sharedkey-composer-border) !important; border-color: var(--vc-sharedkey-composer-border) !important; }
 
 /* Overlap two device pixels at each edge. Opaque paint avoids a doubled tint;
@@ -85,7 +84,7 @@
     pointer-events: none;
     z-index: 0;
 }
-.vc-sharedkey-run-continuation:hover::after, .vc-sharedkey-run-continuation:focus-within::after { background: var(--vc-sharedkey-gap-hover); }
+.vc-sharedkey-run-continuation:hover::after { background: var(--vc-sharedkey-gap-hover); }
 
 .vc-sharedkey-composer-surface { transition: background-color 120ms ease-out, box-shadow 120ms ease-out, border-color 120ms ease-out; }
 .vc-sharedkey-composer-initial { transition: none !important; }

@@ -122,7 +122,8 @@ export const CloudDownloadIcon = () => null;
 export const openMediaModal = () => {};
 export const findComponentByCodeLazy = () => () => null;
 export const findComponentLazy = () => () => null;
-export const findByPropsLazy = (...props) => props.includes("isDiscordAssetUrl") ? globalThis.testUrls : globalThis.testImageActions;
+export const findByPropsLazy = (...props) => props.includes("isDiscordAssetUrl") ? globalThis.testUrls : props.includes("showNotification") ? globalThis.testNotifications : globalThis.testImageActions;
+export const findByCodeLazy = () => async url => url;
 export const MessageActions = globalThis.testActions;
 export const FluxDispatcher = globalThis.testDispatcher;
 export const MessageStore = { getMessage: (channel,id) => globalThis.testMessages.get(channel+":"+id), getMessages: () => ({ _array: globalThis.testRecent ?? [] }) };
@@ -180,6 +181,15 @@ globalThis.testImageActions = {
     copyImage: async () => {},
     saveImage: async () => "saved",
 };
+const nativeNotifications = [];
+globalThis.testNotifications = {
+    showNotification(...args) {
+        nativeNotifications.push({ receiver: this, args });
+        return "native handle";
+    },
+    playNotificationSound() {},
+};
+const originalNotification = testNotifications.showNotification;
 const events = [];
 globalThis.testMessages = new Map();
 globalThis.testDispatcher = {
@@ -541,6 +551,49 @@ check("Native notification decrypts before display without changing options or w
     assert.equal(events.at(-1).options, optionsRef);
     assert.equal(notification.body, receive.content);
 });
+const nativeTracking = { channel_id: channel, message_id: receive.id, notif_type: "MESSAGE_CREATE" };
+const nativeOptions = { sound: "message3", onClick() {}, onClose() {} };
+assert.equal(
+    await testNotifications.showNotification(
+        "avatar.png",
+        "Friend",
+        receive.content,
+        nativeTracking,
+        nativeOptions,
+    ),
+    "native handle",
+);
+check(
+    "Direct NotificationStore path decrypts while preserving the native handle, receiver, callbacks and tracking",
+    () => {
+        const call = nativeNotifications.at(-1);
+        assert.equal(call.args[2], "Readable notification");
+        assert.equal(call.receiver, testNotifications);
+        assert.equal(call.args[3], nativeTracking);
+        assert.equal(call.args[4], nativeOptions);
+    },
+);
+await testNotifications.showNotification("avatar.png", "Friend", "[VCS1:UNAVAILABLE]", {}, nativeOptions);
+check("Direct native notifications with missing keys never show ciphertext", () =>
+    assert.equal(nativeNotifications.at(-1).args[2], "Encrypted message"),
+);
+assert.equal(
+    testNotifications.showNotification("avatar.png", "Friend", "normal text", {}, nativeOptions),
+    "native handle",
+);
+check("Ordinary direct notifications retain synchronous behavior", () =>
+    assert.equal(nativeNotifications.at(-1).args[2], "normal text"),
+);
+const coldDirect = {
+    ...receive,
+    id: "456789012345678905",
+    content: crypto.encryptText("Cold direct notification", key, channel, author),
+};
+testDispatcher.dispatch({ type: "MESSAGE_CREATE", message: coldDirect });
+await testNotifications.showNotification("avatar.png", "Friend", coldDirect.content, {}, nativeOptions);
+check("Direct notifications wait for first-time decryption instead of displaying a ciphertext frame", () =>
+    assert.equal(nativeNotifications.at(-1).args[2], "Cold direct notification"),
+);
 await testDispatcher.dispatch({ ...notification, body: receive.content.slice(0, 34) + "…" });
 check("Truncated ciphertext notification resolves using incoming message context", () =>
     assert.equal(events.at(-1).body, "Readable notification"),
@@ -622,6 +675,9 @@ delete globalThis.testChannel;
 plugin.stop();
 check("Disabling plugin restores notification/edit dispatch", () =>
     assert.equal(testDispatcher.dispatch, originalDispatch),
+);
+check("Disabling plugin restores Discord's native notification function", () =>
+    assert.equal(testNotifications.showNotification, originalNotification),
 );
 check("Disabling plugin restores original action functions", () =>
     assert.deepEqual(globalThis.testActions, originals),

@@ -48,6 +48,8 @@ Type and attach files normally. SharedKey encrypts them before upload and displa
 
 Replies, edits, and desktop notifications use decrypted text. Images and GIFs use Discord's attachment components and media viewer. Right-click an image to copy or save it; click a document's filename to save it. The original filename is encrypted with the file contents.
 
+Encrypted mentions get a local yellow edge marker. Discord receives no mention ping from the encrypted text. Existing reply highlights keep Discord's native marker. Discord attachment image links refresh their signed URLs through the client before loading a preview.
+
 Right-click an encrypted text message and choose **View encrypted original** to inspect its ciphertext. Turning encryption off keeps old messages readable. Replacing a key retains earlier keys for that chat.
 
 ## Limits

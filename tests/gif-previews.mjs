@@ -15,6 +15,64 @@ await build({
     outfile: output,
 });
 const resolver = await import(pathToFileURL(output));
+const mediaOutput = path.join(root, ".test-output", "media-links.mjs");
+await build({
+    entryPoints: [path.join(root, "src", "mediaLinks.ts")],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: mediaOutput,
+});
+const media = await import(pathToFileURL(mediaOutput));
+const expiredGif =
+    "https://cdn.discordapp.com/attachments/123456789012345678/234567890123456789/watermark.gif?ex=1&is=1&hm=old";
+const refreshedGif = expiredGif.replace("ex=1&is=1&hm=old", "ex=ffffffff&is=2&hm=fresh");
+assert.deepEqual(media.previewLinks(expiredGif), [{ page: false, url: expiredGif }]);
+assert.equal(
+    await media.refreshDiscordImage(expiredGif, async (url) => {
+        assert.equal(url, expiredGif);
+        return refreshedGif;
+    }),
+    refreshedGif,
+);
+assert.equal(media.previewLinks(expiredGif.replace("cdn.discordapp.com", "images.discordapp.net")).length, 1);
+assert.equal(
+    media.previewLinks(expiredGif.replace("cdn.discordapp.com", "cdn-canary.discordapp.com")).length,
+    1,
+);
+assert.equal(media.previewLinks(expiredGif.replace("watermark.gif", "my%20animation%2Egif")).length, 1);
+assert.equal(media.gifUrl(expiredGif.replace("watermark.gif", "my%20animation%2Egif")), true);
+assert.equal(media.previewLinks("`" + expiredGif + "`").length, 0);
+assert.equal(media.previewLinks("<" + expiredGif + ">").length, 0);
+assert.equal(media.previewLinks("||" + expiredGif + "||").length, 0);
+for (const url of [
+    expiredGif.replace("cdn.discordapp.com", "example.invalid"),
+    expiredGif.replace("https:", "http:"),
+    expiredGif.replace("watermark.gif", "private.zip"),
+]) {
+    assert.equal(media.discordImageUrl(url), undefined);
+    await assert.rejects(
+        media.refreshDiscordImage(url, () => {
+            throw new Error("Must not refresh unsupported URLs");
+        }),
+        /Unsupported/,
+    );
+}
+await assert.rejects(
+    media.refreshDiscordImage(expiredGif, async () =>
+        refreshedGif.replace("234567890123456789", "999999999999999999"),
+    ),
+    /different attachment/,
+);
+await assert.rejects(
+    media.refreshDiscordImage(expiredGif, async () =>
+        refreshedGif.replace("cdn.discordapp.com", "example.invalid"),
+    ),
+    /different attachment/,
+);
+console.log(
+    "PASS Discord attachment GIF recognition, signed URL refresh, encoded filenames, suppression and resource validation",
+);
 
 const metadata =
     '<meta property="og:image" content="https://static2.klipy.com/thumbnail.webp"><meta property="og:image" content="https://static2.klipy.com/animation.gif">';
