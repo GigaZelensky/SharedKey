@@ -204,7 +204,10 @@ try {
         assert.equal(video.width, 320);
         assert.equal(video.height, 180);
         assert.ok(video.local && video.played);
-        assert.ok(video.pixel[0] > 170 && video.pixel[1] < 100, "poster contains the decoded red frame");
+        assert.ok(
+            video.pixel[0] > 170 && video.pixel[1] < 100,
+            `poster contains the decoded red frame (${video.mime}: ${video.pixel.join(",")})`,
+        );
     }
     assert.equal(checks.savedFilename, "broken.mp4");
     assert.ok(checks.invalidRejected && checks.remoteRejected && checks.allRevoked);

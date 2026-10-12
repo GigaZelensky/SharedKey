@@ -19,7 +19,7 @@ export async function localVideoMetadata(url: string, timeout = 5000): Promise<{
             const fail = () => { if (!settled) { settled = true; reject(new Error("This video cannot be previewed.")); } };
             timer = setTimeout(fail, timeout);
             video.onerror = fail;
-            video.onloadeddata = () => {
+            const capture = () => {
                 if (settled || !video.videoWidth || !video.videoHeight) { fail(); return; }
                 const width = video.videoWidth, height = video.videoHeight;
                 const canvas = document.createElement("canvas");
@@ -38,6 +38,15 @@ export async function localVideoMetadata(url: string, timeout = 5000): Promise<{
                     }, "image/png");
                 } catch { fail(); }
             };
+            let seekingFrame = false;
+            video.onloadeddata = () => {
+                if (settled || seekingFrame) return;
+                if (Number.isFinite(video.duration) && video.duration > 0.1) {
+                    seekingFrame = true;
+                    video.onseeked = capture;
+                    video.currentTime = Math.min(0.1, video.duration / 2);
+                } else capture();
+            };
             video.src = url;
             video.load();
         });
@@ -45,6 +54,7 @@ export async function localVideoMetadata(url: string, timeout = 5000): Promise<{
         clearTimeout(timer);
         video.onloadeddata = null;
         video.onerror = null;
+        video.onseeked = null;
         video.removeAttribute("src");
         video.load();
     }
