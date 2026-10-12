@@ -53,9 +53,16 @@ const restorers: (() => void)[] = [];
 const encryptedUploads = new WeakMap<CloudUpload, File>();
 const uploadGuards = new WeakMap<CloudUpload, Promise<void>>();
 const seenExchanges = new Set<string>();
+const uploadModeChanged = "Encryption was turned off after this attachment was prepared. Remove it and attach it again to send without encryption.";
+
+function assertUploadMode(upload: CloudUpload, enabled: boolean) {
+    const file = upload.item?.file;
+    if (!enabled && file && encryptedUploads.get(upload) === file) throw new Error(uploadModeChanged);
+}
 
 async function guardUpload(upload: CloudUpload) {
     const info = await Native.channelInfo(upload.channelId);
+    assertUploadMode(upload, info.enabled);
     if (!info.enabled) return;
     if (info.identityChanged) throw new Error("Your friend's identity key changed. Approve the replacement in encryption options before uploading.");
     if (info.method && !info.fingerprint) throw new Error("Finish encryption setup in this chat before uploading.");
@@ -64,6 +71,7 @@ async function guardUpload(upload: CloudUpload) {
     if (["STARTED", "UPLOADING", "COMPLETED"].includes(upload.status)) throw new Error("This attachment started uploading before encryption. Remove it and attach it again.");
     if (!file || file.size > 64 * 1024 * 1024 + 4200) throw new Error("Encrypted uploads must be 64 MiB or smaller.");
     const data = await Native.encryptUpload(upload.channelId, new Uint8Array(await file.arrayBuffer()), file.name);
+    if (!(await Native.channelInfo(upload.channelId)).enabled) throw new Error(uploadModeChanged);
     const encryptedFile = new File([new Uint8Array(data).buffer], "encrypted.vcs", { type: "application/octet-stream" });
     upload.item = { ...upload.item, file: encryptedFile };
     (upload.item as any).imageConversionEvaluated = true;
@@ -255,6 +263,7 @@ export function DecryptedMessage({ message }: { message: Message; }) {
 
 async function protect(channelId: string, message: MessageObject | any, options?: any, force = false) {
     const info = await Native.channelInfo(channelId);
+    for (const upload of options?.attachmentsToUpload ?? []) assertUploadMode(upload, info.enabled);
     if (!info.enabled && !force) return;
     if (!message || typeof message.content !== "string") throw new Error("Unsupported message type in a protected chat.");
     if (message.sticker_ids?.length || options?.stickerIds?.length || options?.alsoForwardToChannelId || message.message_snapshots?.length || message.messageSnapshots?.length || options?.scheduledTimestamp

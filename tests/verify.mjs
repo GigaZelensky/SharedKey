@@ -500,6 +500,38 @@ check("Completed upload encrypted by this build is not replaced after upload", (
     assert.equal(zipUpload.item.file, alreadyEncryptedFile);
     assert.deepEqual(repeatedZipBytes, uploadedZip);
 });
+enabled = false;
+cancelled = false;
+await assert.rejects(() => plugin.guardUploads([zipUpload]), /turned off after this attachment was prepared/);
+check("Turning encryption off blocks an already-encrypted attachment and explains how to reattach it", () => {
+    assert.equal(cancelled, true);
+    assert.equal(zipUpload.item.file, alreadyEncryptedFile);
+    assert.match(toasts.at(-1), /attach it again to send without encryption/);
+});
+const mismatchSent = sent.length;
+const mismatchOptions = { attachmentsToUpload: [zipUpload] };
+assert.equal(
+    (await plugin.onBeforeMessageSend(channel, msg(), mismatchOptions, { hasStickers: false })).cancel,
+    true,
+);
+await assert.rejects(
+    () => testActions.sendMessage(channel, msg(), false, mismatchOptions),
+    /turned off after/,
+);
+await assert.rejects(() => testActions._sendMessage(channel, msg(), mismatchOptions), /turned off after/);
+check(
+    "Both send boundaries reject the changed attachment mode before Discord creates a pending message",
+    () => {
+        assert.equal(sent.length, mismatchSent);
+    },
+);
+enabled = true;
+cancelled = false;
+await plugin.guardUploads([zipUpload]);
+check("Restoring the matching encryption mode accepts the original prepared upload", () => {
+    assert.equal(zipUpload.item.file, alreadyEncryptedFile);
+    assert.equal(cancelled, false);
+});
 const originalUploadInfo = VencordNative.pluginHelpers.SharedKey.channelInfo;
 VencordNative.pluginHelpers.SharedKey.channelInfo = async () => ({
     enabled: true,
@@ -588,6 +620,31 @@ await assert.rejects(() =>
     ]),
 );
 check("Attachment encryption failure cancels upload", () => assert.equal(cancelled, true));
+VencordNative.pluginHelpers.SharedKey.encryptUpload = oldHelper;
+const raceUploadFile = new File([zipBytes], "race.zip");
+const raceUpload = {
+    channelId: channel,
+    status: "NOT_STARTED",
+    item: { file: raceUploadFile },
+    cancel() {
+        cancelled = true;
+    },
+};
+enabled = true;
+cancelled = false;
+VencordNative.pluginHelpers.SharedKey.encryptUpload = async (...args) => {
+    const data = await oldHelper(...args);
+    enabled = false;
+    return data;
+};
+await assert.rejects(() => plugin.guardUploads([raceUpload]), /turned off after/);
+check(
+    "Turning encryption off during preparation cancels the upload before replacing or transmitting its bytes",
+    () => {
+        assert.equal(cancelled, true);
+        assert.equal(raceUpload.item.file, raceUploadFile);
+    },
+);
 VencordNative.pluginHelpers.SharedKey.encryptUpload = oldHelper;
 enabled = false;
 await testActions.sendMessage(channel, msg(), {});
