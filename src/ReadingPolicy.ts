@@ -15,13 +15,13 @@ const listeners = new Set<(readingChanged: boolean) => void>();
 let generation = 0;
 const token = (message: any) => `${message.channel_id}:${message.id}:${message.content}`;
 export function readingEnabled(channelId: string) { return policies.get(channelId)?.reading ?? false; }
-export function previewMode(channelId: string): PreviewMode { return policies.get(channelId)?.previews ?? "manual"; }
+export function previewMode(channelId: string): PreviewMode { return policies.get(channelId)?.previews ?? "automatic"; }
 export function previewsAllowed(message: any) {
     return readingEnabled(message.channel_id) && (previewMode(message.channel_id) === "automatic" || (previewMode(message.channel_id) === "manual" && grants.has(token(message))));
 }
 export function onReadingPolicyChange(callback: (readingChanged: boolean) => void) { listeners.add(callback); return () => { listeners.delete(callback); }; }
 export function rememberReadingPolicy(channelId: string, info: { reading?: boolean; previews?: PreviewMode; }) {
-    const next = { reading: info.reading ?? true, previews: info.previews ?? "manual" };
+    const next = { reading: info.reading ?? true, previews: info.previews ?? "automatic" };
     const previous = policies.get(channelId);
     if (previous?.reading === next.reading && previous.previews === next.previews) return;
     policies.set(channelId, next);

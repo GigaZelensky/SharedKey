@@ -91,7 +91,7 @@ export function channelInfo(_: IpcMainInvokeEvent, channelId: string) {
     return {
         enabled: c?.enabled ?? false, fingerprint: c?.current ?? "", keyCount: Object.keys(c?.keys ?? {}).length, color: c?.color ?? "#7d52ff",
         keyIds: Object.keys(c?.keys ?? {}),
-        reading: c?.reading ?? true, previews: c?.previews ?? "manual" as PreviewMode,
+        reading: c?.reading ?? true, previews: c?.previews ?? "automatic" as PreviewMode,
         method: c?.method ?? "shared" as Method,
         identityFingerprint: c?.exchange ? exchangeFingerprint(c.exchange) : "",
         identityVerified: c?.exchange?.verified ?? false,
@@ -103,7 +103,7 @@ export function channelInfo(_: IpcMainInvokeEvent, channelId: string) {
 
 // Rendering hints only: never expose the saved keys through this snapshot.
 export function channelStates(_: IpcMainInvokeEvent) {
-    return Object.fromEntries(Object.entries(load()).map(([id, c]) => [id, { enabled: c.enabled, color: c.color ?? "#7d52ff", reading: c.reading ?? true, previews: c.previews ?? "manual" as PreviewMode }]));
+    return Object.fromEntries(Object.entries(load()).map(([id, c]) => [id, { enabled: c.enabled, color: c.color ?? "#7d52ff", reading: c.reading ?? true, previews: c.previews ?? "automatic" as PreviewMode }]));
 }
 
 export function setReadingOptions(_: IpcMainInvokeEvent, channelId: string, reading: boolean, previews: PreviewMode) {

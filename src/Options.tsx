@@ -32,7 +32,7 @@ function OptionsFrame({ embedded, channelName, rootProps, children }: { embedded
 }
 
 export function EncryptionOptions({ channelId, channelName, rootProps, native, onUpdate, onMethod, onExchange, embedded }: OptionsProps) {
-    const [info, setInfo] = useState<ChannelInfo>({ enabled: false, reading: true, previews: "manual", fingerprint: "", keyCount: 0, keyIds: [], color: "#7d52ff", method: "shared", identityFingerprint: "", identityVerified: false, identityChanged: false, exchangePending: false, exchangeExpired: false });
+    const [info, setInfo] = useState<ChannelInfo>({ enabled: false, reading: true, previews: "automatic", fingerprint: "", keyCount: 0, keyIds: [], color: "#7d52ff", method: "shared", identityFingerprint: "", identityVerified: false, identityChanged: false, exchangePending: false, exchangeExpired: false });
     const [key, setKey] = useState("");
     const [savedKey, setSavedKey] = useState("");
     const [reveal, setReveal] = useState(false);
@@ -44,10 +44,13 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
     const [forgetting, setForgetting] = useState(false);
     const [offlineId, setOfflineId] = useState("");
     const inFlight = useRef(false);
+    const busyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const revision = useRef(0);
     const form = useRef<HTMLDivElement>(null);
     const dirty = key.trim() !== savedKey;
     const selectedOfflineId = info.keyIds.includes(offlineId) ? offlineId : info.fingerprint || info.keyIds[0] || "";
+
+    useEffect(() => () => clearTimeout(busyTimer.current), []);
 
     useLayoutEffect(() => {
         const node = form.current;
@@ -109,14 +112,17 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
         if (inFlight.current) return;
         inFlight.current = true;
         revision.current++;
-        setBusy(true);
+        // Block overlapping writes immediately, but don't flash every control's
+        // disabled appearance for an ordinary local save. Show it only if the
+        // operation takes long enough to need visible progress feedback.
+        busyTimer.current = setTimeout(() => setBusy(true), 200);
         setStatus("");
         setError(false);
         try { await fn(); }
         catch (e) {
             setError(true);
             setStatus(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "Could not update encryption.");
-        } finally { inFlight.current = false; setBusy(false); }
+        } finally { clearTimeout(busyTimer.current); inFlight.current = false; setBusy(false); }
     }
 
     async function save() {

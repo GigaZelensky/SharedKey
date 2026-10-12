@@ -838,7 +838,7 @@ check("Startup rendering snapshot contains state/color but no saved keys", () =>
         enabled: true,
         color: "#7d52ff",
         reading: true,
-        previews: "manual",
+        previews: "automatic",
     });
     assert.equal(JSON.stringify(native.channelStates(null)).includes(key), false);
 });

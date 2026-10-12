@@ -33,7 +33,7 @@ export function withReadingPreferences(backend: SharedKeyNative, storage: Storag
     }
     async function decorate(channelId: string, info: any) {
         await load();
-        const preferences = saved![channelId] ?? { reading: info.reading ?? true, previews: info.previews ?? "manual" };
+        const preferences = saved![channelId] ?? { reading: info.reading ?? true, previews: info.previews ?? "automatic" };
         return { ...info, ...preferences };
     }
     const native = new Proxy({} as any, { get: (overrides, key) => Object.hasOwn(overrides, key) ? overrides[key] : (backend as any)[key] });

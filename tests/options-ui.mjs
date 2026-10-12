@@ -39,7 +39,7 @@ import "./src/style.css";
 const channel="123456789012345678";
 window.backendEnabled=true;
 const info=()=>({enabled:window.backendEnabled,fingerprint:window.noKey?"":"test",keyCount:1,keyIds:["test"],color:"#7d52ff",method:"shared",identityFingerprint:"",identityVerified:false,identityChanged:false,exchangePending:false,exchangeExpired:false,...(location.search.includes("new")?{reading:true,previews:"automatic"}:{})});
-const backend={channelInfo:async()=>info(),revealKey:async()=>"synthetic-fixture-key",setEnabled:async(_id,value)=>{if(window.failSave)throw new Error("Synthetic save failure");window.backendEnabled=value;return info();}};
+const backend={channelInfo:async()=>info(),revealKey:async()=>"synthetic-fixture-key",setEnabled:async(_id,value)=>{window.saveCalls=(window.saveCalls??0)+1;if(window.holdSave)await new Promise(resolve=>window.finishSave=resolve);if(window.failSave)throw new Error("Synthetic save failure");window.backendEnabled=value;return info();}};
 const native=withReadingPreferences(backend,{get:storage.get,set:async(...args)=>{if(window.failStorage)throw new Error("Synthetic preference failure");return storage.set(...args);}});
 window.native=native;
 function Harness(){const [current,setCurrent]=useState(null);return <><output id="active-reading">{current?(readingEnabled(channel)?"reading":"raw"):"loading"}</output><EncryptionOptions channelId={channel} channelName="Fixture chat" rootProps={{}} native={native} onUpdate={next=>{rememberReadingPolicy(channel,next);setCurrent(next);}} onMethod={async()=>info()} onExchange={async()=>info()} /></>}
@@ -114,9 +114,19 @@ try {
     await load("");
     assert.deepEqual(await state(), {
         checked: [true, true],
-        preview: "manual",
+        preview: "automatic",
         disabled: false,
         active: "reading",
+    });
+    await page.evaluate(() => {
+        window.originalForm = document.querySelector(".vc-sharedkey-options");
+        window.originalKeyInput = document.querySelector("#vc-sharedkey-input");
+        window.disabledChanges = [];
+        window.formObserver = new MutationObserver((records) => {
+            for (const record of records)
+                if (record.attributeName === "disabled") window.disabledChanges.push(record.target.tagName);
+        });
+        window.formObserver.observe(window.originalForm, { subtree: true, attributes: true });
     });
     await page.click("input[type=checkbox]");
     await page.waitForFunction(
@@ -134,6 +144,39 @@ try {
         disabled: false,
         active: "raw",
     });
+    assert.deepEqual(
+        await page.evaluate(() => window.disabledChanges),
+        [],
+        "quick settings saves must not flash the entire form disabled",
+    );
+    assert.ok(
+        await page.evaluate(
+            () =>
+                window.originalForm === document.querySelector(".vc-sharedkey-options") &&
+                window.originalKeyInput === document.querySelector("#vc-sharedkey-input"),
+        ),
+        "saving settings must preserve the mounted form and key field",
+    );
+    await page.evaluate(() => {
+        window.formObserver.disconnect();
+        window.holdSave = true;
+        window.saveCalls = 0;
+        const input = document.querySelector("input[type=checkbox]");
+        input.click();
+        input.click();
+    });
+    await page.waitForFunction(() => document.querySelector("input[type=checkbox]").disabled);
+    assert.equal(
+        await page.evaluate(() => window.saveCalls),
+        1,
+        "overlapping writes are blocked immediately",
+    );
+    await page.evaluate(() => {
+        window.holdSave = false;
+        window.finishSave();
+    });
+    await page.waitForFunction(() => !document.querySelector("input[type=checkbox]").disabled);
+    assert.equal((await state()).checked[0], true);
     await load("?new");
     assert.deepEqual(await state(), {
         checked: [true, false],
@@ -176,10 +219,21 @@ try {
         document.querySelector('[role="alert"]')?.textContent.includes("Synthetic preference failure"),
     );
     assert.equal((await state()).preview, "never");
+    await page.evaluate(() => {
+        window.failStorage = false;
+    });
+    await page.select("#vc-sharedkey-previews", "manual");
+    await page.waitForFunction(() => document.querySelector("#vc-sharedkey-previews").value === "manual");
+    await load("?new");
+    assert.equal(
+        (await state()).preview,
+        "manual",
+        "an explicit On click preference overrides the Automatic default",
+    );
     assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(work, "options.png") });
     console.log(
-        "PASS real Options + Vencord FormSwitch/Switch: legacy backend defaults, mouse toggles, reading/preview independence, IndexedDB persistence across reload and backend upgrade, external state sync, and visible save failures",
+        "PASS real Options + Vencord FormSwitch/Switch: stable controls during quick saves, slow-save feedback and overlapping-write guard, legacy backend defaults, mouse toggles, reading/preview independence, IndexedDB persistence across reload and backend upgrade, external state sync, and visible save failures",
     );
 } finally {
     await browser.close();
