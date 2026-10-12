@@ -40,7 +40,7 @@ Use a test chat and non-sensitive files. Verify with another client that the sto
 - Switch between two encrypted chats, then into an unencrypted chat. Check lock state, accent, and saved color.
 - Send text, a file-only ZIP, an image/GIF, and a file with a caption. Confirm there is one visible attachment per upload.
 - Check reply excerpts, editing, notifications, and the delete preview.
-- Send an encrypted MP4 and WebM. Check the native inline player and media viewer, including local thumbnails, seeking, sound, and download. Unsupported or damaged video must remain saveable as a file.
+- Send an encrypted MP4 and WebM. Check the native inline player and media viewer, including local thumbnails, seeking, sound, and download. Unsupported or damaged video must remain saveable as a file. Check both inline and expanded players: their separate poster paths must resolve to the local PNG even if Discord appended image query parameters to the video blob. A visible blank/error preview must return to a saveable file card; an offscreen row must not trigger this fallback.
 - Open an image in Discord's media viewer. Copy and save it through the native menu. Clicking empty space beside it must do nothing.
 - Check spoiler handling and ordinary `.vcs` files that are not encrypted.
 - Download an oversized incoming file as ciphertext and restore it with the offline decoder.

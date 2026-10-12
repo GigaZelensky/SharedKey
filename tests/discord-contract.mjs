@@ -268,3 +268,81 @@ assert.equal(
 console.log(
     "PASS actual native video classification, attachment thumbnail and media-viewer poster paths use local blobs; ordinary CDN posters unchanged",
 );
+
+// The inline player renders through LazyImage before it creates MediaPlayer.
+// Exercise that wrapper, not only the thumbnail metadata helper.
+dependencies[477900] = { jsx: (type, props) => ({ type, props }) };
+dependencies[582128].Component = class {
+    constructor(props) {
+        this.props = props;
+    }
+};
+dependencies[619517] = { Ay: "NativeLazyImage" };
+dependencies[440014] = {
+    Ay: Object.assign(function NativeMediaPlayer() {}, {
+        minWidth: 150,
+        minHeight: 110,
+        Types: { VIDEO: "video" },
+    }),
+};
+dependencies[453771] = { Hb: String };
+dependencies[660183] = { intl: { string: () => "video" }, t: {} };
+const wrapperSource = moduleSource(248643);
+const wrapperPatch = /}=this\.props;(?=return\(0,[A-Za-z_$][\w$]*\.jsx\)\([A-Za-z_$][\w$]*\.Ay,)/;
+assert.equal([...wrapperSource.matchAll(new RegExp(wrapperPatch.source, "g"))].length, 1);
+const brokenPoster = "blob:https://discord.com/video?format=webp#clip.mp4";
+const renderProps = { src: localVideo, poster: brokenPoster, width: 320, height: 180 };
+const unpatchedVideo = load(wrapperSource).A;
+assert.equal(new unpatchedVideo(renderProps).render().props.src, brokenPoster);
+const repairedVideo = load(wrapperSource.replace(wrapperPatch, "}=$self.nativeVideoProps(this.props);"), {
+    $self: {
+        nativeVideoProps: (props) => ({
+            ...props,
+            poster: localPoster,
+            naturalWidth: 320,
+            naturalHeight: 180,
+        }),
+    },
+}).A;
+const lazyImage = new repairedVideo(renderProps).render();
+assert.equal(lazyImage.props.src, localPoster);
+const playerElement = lazyImage.props.children({ src: localPoster, size: { width: 320, height: 180 } });
+assert.equal(playerElement.props.src, localVideo);
+assert.equal(playerElement.props.forceExternal, false);
+assert.equal(playerElement.props.poster, localPoster);
+// Verify the shared image URL path also repairs transformed local video URLs.
+dependencies[635377] = class extends Map {
+    constructor() {
+        super();
+    }
+};
+dependencies[835517] = { A: () => 1 };
+const loaderSource = moduleSource(776231);
+const loaderPatch = /if\(([A-Za-z_$][\w$]*)\.startsWith\("data:image"\)/;
+assert.equal([...loaderSource.matchAll(new RegExp(loaderPatch.source, "g"))].length, 1);
+const loader = load(
+    loaderSource.replace(
+        loaderPatch,
+        '$1=$self.imageSource($1);if($1.startsWith("blob:")||$1.startsWith("data:image")',
+    ),
+    { $self: { imageSource: (url) => (url === brokenPoster ? localPoster : url) } },
+);
+assert.equal(loader.AE({ src: brokenPoster, width: 320, height: 180 }), localPoster);
+console.log(
+    "PASS actual inline LazyImage-to-MediaPlayer render route and shared URL normalizer repair transformed blob posters without replacing the native player",
+);
+
+const mediaPosterPatch =
+    /return\{\.\.\.([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),type:(?=\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\(\2\.filename\))/;
+assert.equal([...mediaSource.matchAll(new RegExp(mediaPosterPatch.source, "g"))].length, 1);
+const explicitPosterMedia = load(
+    mediaSource.replace(
+        mediaPosterPatch,
+        "return{...$1($2),poster:$self.videoPoster($2.proxy_url??$2.url)??undefined,type:",
+    ),
+    videoScope,
+);
+assert.equal(explicitPosterMedia.Rr(attachment, raw).poster, localPoster);
+console.log(
+    "PASS native attachment media records supply the explicit poster consumed by the current media viewer",
+);

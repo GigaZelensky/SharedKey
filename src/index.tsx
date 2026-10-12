@@ -16,7 +16,7 @@ import { ChannelStore, Menu, MessageActions, MessageStore, Modal, openModal, Rea
 
 import { bindComposerAccent } from "./ComposerAccent";
 import { EncryptionMethod, EXCHANGE_PREFIX } from "./exchangeWire";
-import { localFile, localImage, retryFailedAttachments } from "./FileAttachments";
+import { localFile, localImage, localVideoPoster, retryFailedAttachments } from "./FileAttachments";
 import { installLocalImageActions } from "./LocalImageActions";
 import { MessagePaint } from "./MessagePaint";
 import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
@@ -26,6 +26,7 @@ import { EncryptionOptions } from "./Options";
 import { clearReadingPolicies, readingEnabled, rememberReadingPolicy } from "./ReadingPolicy";
 import { refreshReceivedMessages } from "./ReceiveMessages";
 import style from "./style.css?managed";
+import { nativeVideoProps } from "./VideoPresentation";
 import { wireMessage } from "./WireMessages";
 
 const Native = VencordNative.pluginHelpers.SharedKey as PluginNative<typeof NativeTypes>;
@@ -302,7 +303,9 @@ export default definePlugin({
     },
     isLocalImage: (src: string) => !!localImage(src),
     isLocalVideo: (src?: string) => !!src && localFile(src)?.mime.startsWith("video/"),
-    videoPoster: (src: string) => localFile(src)?.poster ?? null,
+    videoPoster: (src: string) => localVideoPoster(src) ?? null,
+    imageSource: (src: string) => localVideoPoster(src) ?? src,
+    nativeVideoProps,
     networkMessage: wireMessage,
     blockNativeUnfurl: (message: Message) => wireMessage(message).content?.startsWith("[VCS1:"),
     patches: [{
@@ -345,14 +348,26 @@ export default definePlugin({
         // Discord appends media resize/format query parameters to blob URLs,
         // which invalidates them. Keep local media URLs intact in its image loader.
         find: "ImageLoaderUtils.getSrcWithWidthAndHeight",
-        replacement: { match: /if\((\i)\.startsWith\("data:image"\)/, replace: 'if($1.startsWith("blob:")||$1.startsWith("data:image")' }
+        replacement: { match: /if\((\i)\.startsWith\("data:image"\)/, replace: '$1=$self.imageSource($1);if($1.startsWith("blob:")||$1.startsWith("data:image")' }
+    }, {
+        // Repair the actual inline video wrapper too, regardless of which
+        // upstream attachment layout assembled its poster URL.
+        find: /forceExternal:!\(\i<=6016&&\i<=3384/,
+        replacement: {
+            match: /}=this\.props;(?=return\(0,\i\.jsx\)\(\i\.Ay,)/,
+            replace: "}=$self.nativeVideoProps(this.props);"
+        }
     }, {
         // Native media viewer poster lookup; preserve the local video source.
         find: /if\("VIDEO"===\i\.type&&null!=\i\.proxyUrl\)/,
-        replacement: {
+        replacement: [{
             match: /function (\i)\((\i)\)\{(?=if\(null==\2\)return null;if\("VIDEO"===\2\.type&&null!=\2\.proxyUrl\))/,
             replace: "$&if($self.isLocalVideo($2?.proxyUrl??$2?.url))return $self.videoPoster($2.proxyUrl??$2.url);"
-        }
+        }, {
+            // The current viewer prefers the media item's explicit poster.
+            match: /return\{\.\.\.(\i)\((\i)\),type:(?=\(0,\i\.\i\)\(\2\.filename\))/,
+            replace: "return{...$1($2),poster:$self.videoPoster($2.proxy_url??$2.url)??undefined,type:"
+        }]
     }, {
         // Native attachment thumbnails ordinarily append format=webp to a CDN
         // URL. Decrypted blobs instead have an independently decoded local poster.

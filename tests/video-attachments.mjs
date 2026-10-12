@@ -16,7 +16,7 @@ await writeFile(
 const result = await build({
     stdin: {
         contents:
-            "export * from './src/LocalImageActions'; export * from './src/VideoMetadata'; export * from './src/FileAttachments'; export * from './src/ReadingPolicy'; export * from './src/ReceiveMessages';",
+            "export * from './src/VideoPresentation'; export * from './src/LocalImageActions'; export * from './src/VideoMetadata'; export * from './src/FileAttachments'; export * from './src/ReadingPolicy'; export * from './src/ReceiveMessages';",
         resolveDir: root,
     },
     bundle: true,
@@ -58,6 +58,8 @@ try {
     const checks = await page.evaluate(async (fixtures) => {
         const channel = "123456789012345678";
         const outputs = [];
+        let posterRoutes = 0,
+            blankFallbacks = 0;
         const created = [],
             revoked = [];
         const originalCreate = URL.createObjectURL.bind(URL),
@@ -106,6 +108,25 @@ try {
                 throw new Error("Video metadata missing from cached file");
             }
             const dto = fixture.receivedPayload(message, channel).attachments[0];
+            const transformed = view.url + "?format=webp&width=400#" + filename;
+            const invalidPoster = new Image();
+            invalidPoster.src = transformed;
+            let failedAsImage = false;
+            try {
+                await invalidPoster.decode();
+            } catch {
+                failedAsImage = true;
+            }
+            const repaired = fixture.nativeVideoProps({ src: dto.url, poster: transformed });
+            if (
+                !failedAsImage ||
+                repaired.poster !== view.poster ||
+                fixture.localVideoPoster(transformed) !== view.poster
+            )
+                throw new Error("Native transformed-poster route was not repaired");
+            if (fixture.localVideoPoster(view.poster + "?format=webp") !== view.poster)
+                throw new Error("A transformed PNG poster was not normalized");
+            posterRoutes++;
             const poster = new Image();
             poster.src = view.poster;
             await poster.decode();
@@ -129,6 +150,36 @@ try {
                 pixel,
                 played: player.currentTime > 0,
             });
+            const row = document.createElement("li");
+            row.style.height = "100px";
+            document.body.appendChild(row);
+            row.style.position = "absolute";
+            row.style.top = "10000px";
+            const stopHidden = fixture.watchVideoPresentation(row, [view.url], 30);
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            stopHidden();
+            if (!view.width) throw new Error("Offscreen lazy media must not trigger fallback");
+            row.style.position = "static";
+            row.style.top = "";
+            row.appendChild(poster);
+            const stopValid = fixture.watchVideoPresentation(row, [view.url], 30);
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            stopValid();
+            if (!view.width) throw new Error("A loaded native poster was incorrectly replaced");
+            poster.remove();
+            const stopBlank = fixture.watchVideoPresentation(row, [view.url], 30);
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            stopBlank();
+            row.remove();
+            const fileCard = fixture.receivedPayload(message, channel).attachments[0];
+            if (
+                fileCard.width != null ||
+                fileCard.height != null ||
+                fileCard.filename !== filename ||
+                !fileCard.url.startsWith("blob:")
+            )
+                throw new Error("Blank native view did not fall back to a usable file");
+            blankFallbacks++;
             player.removeAttribute("src");
             player.load();
         }
@@ -188,6 +239,8 @@ try {
         fixture.clearAttachmentCache();
         return {
             outputs,
+            posterRoutes,
+            blankFallbacks,
             invalidRejected,
             remoteRejected,
             savedFilename,
@@ -209,6 +262,8 @@ try {
             `poster contains the decoded red frame (${video.mime}: ${video.pixel.join(",")})`,
         );
     }
+    assert.equal(checks.posterRoutes, 2);
+    assert.equal(checks.blankFallbacks, 2);
     assert.equal(checks.savedFilename, "broken.mp4");
     assert.ok(checks.invalidRejected && checks.remoteRejected && checks.allRevoked);
     assert.deepEqual(checks.fallback, { filename: "broken.mp4", width: null, local: true });

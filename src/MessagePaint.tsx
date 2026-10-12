@@ -17,6 +17,7 @@ import type { SharedKeyNative } from "./Options";
 import { cachedPreviewEmbeds, preparePreviewEmbeds } from "./PreviewEmbeds";
 import { allowMessagePreview, ensureReadingPolicy, onReadingPolicyChange, previewMode, previewsAllowed, readingEnabled } from "./ReadingPolicy";
 import { receiveCachedMessage } from "./ReceiveMessages";
+import { watchVideoPresentation } from "./VideoPresentation";
 import { wireMessage } from "./WireMessages";
 
 export function MessagePaint({ message, native, version }: { message: Message; native: SharedKeyNative; version: number; }) {
@@ -69,6 +70,15 @@ export function MessagePaint({ message, native, version }: { message: Message; n
             for (const property of ["--vc-sharedkey-color", "--vc-sharedkey-fill", "--vc-sharedkey-hover"]) row.style.removeProperty(property);
         };
     }, [message, color, protectedMessage]);
+    useEffect(() => {
+        const row = ref.current?.closest("li");
+        if (!row || !protectedMessage) return;
+        const videos = (wire.attachments ?? []).flatMap(file => {
+            const view = attachmentView(wire.channel_id, file.id);
+            return view?.mime.startsWith("video/") && view.width ? [view.url] : [];
+        });
+        if (videos.length) return watchVideoPresentation(row, videos);
+    }, [message, protectedMessage]);
     if (!protectedMessage) return null;
     const previewButton = text && previewMode(wire.channel_id) === "manual" && previewLinks(text).length > 0 && (!previewsAllowed(wire) || !cachedPreviewEmbeds(text).length);
     return <span ref={ref} className="vc-sharedkey-paint">

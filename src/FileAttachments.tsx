@@ -15,7 +15,21 @@ interface CachedFile { url: string; blob: Blob; filename: string; mime: string; 
 const files = new Map<string, CachedFile>();
 const imageUrls = new Map<string, CachedFile>();
 export function localImage(url: string) { return imageUrls.get(url.split("#")[0]); }
-export function localFile(url: string) { return Array.from(files.values()).find(file => file.url === url.split("#")[0]); }
+function blobId(url: string) { return url.startsWith("blob:") ? url.split(/[?#]/)[0] : url; }
+export function localFile(url: string) { return Array.from(files.values()).find(file => file.url === blobId(url)); }
+export function localVideoPoster(url: string) {
+    const file = localFile(url) ?? Array.from(files.values()).find(file => file.poster === blobId(url));
+    return file?.mime.startsWith("video/") ? file.poster : undefined;
+}
+export function failVideoPreview(url: string) {
+    const file = localFile(url) ?? Array.from(files.values()).find(file => file.poster === blobId(url));
+    if (!file?.mime.startsWith("video/") || !file.width) return;
+    // Keep authenticated bytes and filename, but return to Discord's file card.
+    file.width = undefined; file.height = undefined;
+    if (file.poster) URL.revokeObjectURL(file.poster);
+    file.poster = undefined;
+    fileListeners.forEach(callback => callback());
+}
 const pendingFiles = new Map<string, Promise<CachedFile>>();
 const fileListeners = new Set<() => void>();
 const ordinaryFiles = new Set<string>();
