@@ -12,6 +12,7 @@ import { mentionsUser } from "./localMentions";
 import { cachedPlaintext, decryptionFailed, prepareHistory } from "./MessageView";
 import type { SharedKeyNative } from "./Options";
 import { cachedPreviewEmbeds, onPreviewReady } from "./PreviewEmbeds";
+import { onReadingPolicyChange, previewsAllowed, readingEnabled } from "./ReadingPolicy";
 import { allWireMessages, getWireMessage, markProtectedMessage, referenceAuthor, rememberIncoming, wireMessage } from "./WireMessages";
 
 const presented = new Map<string, { wire: string; text: string; embeds: any[]; }>();
@@ -20,6 +21,7 @@ const presented = new Map<string, { wire: string; text: string; embeds: any[]; }
 // Only Discord's ordinary dispatcher converts this into a Message instance.
 export function receivedPayload(source: any, channelId: string): any {
     const wire = rememberIncoming(source, channelId);
+    if (!readingEnabled(channelId)) return wire;
     const encrypted = wire.content?.startsWith("[VCS1:");
     const setup = wire.content?.startsWith(EXCHANGE_PREFIX);
     const files = encryptedAttachments(wire);
@@ -29,7 +31,7 @@ export function receivedPayload(source: any, channelId: string): any {
     const previous = presented.get(id);
     const text = encrypted ? cachedPlaintext(wire) ?? (previous && previous.wire === wire.content ? previous.text : undefined) : wire.content;
     const previews = encrypted && text !== undefined ? cachedPreviewEmbeds(text) : [];
-    const embeds = previews.length ? previews : previous && previous.wire === wire.content ? previous.embeds : [];
+    const embeds = previewsAllowed(wire) ? (previews.length ? previews : previous && previous.wire === wire.content ? previous.embeds : []) : [];
     if (encrypted && text !== undefined) presented.set(id, { wire: wire.content, text, embeds });
     const content = setup ? "Encryption setup" : encrypted ? text ?? (decryptionFailed(wire) ? "Unable to decrypt. Check this chat's key." : "") : wire.content;
     const ids = new Set(files.map(file => file.id));
@@ -46,7 +48,7 @@ export function receivedPayload(source: any, channelId: string): any {
     const replyAuthor = reference?.author?.id ?? (ref?.message_id ? referenceAuthor(ref.channel_id ?? channelId, ref.message_id) : undefined);
     const mentions = [...(wire.mentions ?? [])];
     if (user && (mentionsUser(content, user) || replyAuthor === user) && !mentions.some((mention: any) => (mention.id ?? mention) === user)) mentions.push({ id: user });
-    return { ...wire, content, attachments, mentions, embeds: [...(wire.embeds ?? []), ...embeds], ...(reference ? { referenced_message: reference } : {}) };
+    return { ...wire, content, attachments, mentions, embeds: encrypted && !previewsAllowed(wire) ? [] : [...(wire.embeds ?? []), ...embeds], ...(reference ? { referenced_message: reference } : {}) };
 }
 
 // Enabling the plugin can encounter records loaded before its receive hook.
@@ -89,19 +91,24 @@ export function installReceiveUpdates(native: SharedKeyNative, dispatch: (event:
                 // A metadata update traverses Discord's normal MESSAGE_UPDATE
                 // conversion too. Bypass our ingress wrapper to retain the wire.
                 const stored = MessageStore.getMessage(wire.channel_id, wire.id);
-                const message = { sharedkey_local_update: true, id: wire.id, channel_id: wire.channel_id, content: payload.content, attachments: payload.attachments, embeds: payload.embeds, mentions: payload.mentions, mention_everyone: payload.mention_everyone, mention_roles: payload.mention_roles, pinned: stored?.pinned ?? wire.pinned, flags: stored?.flags ?? wire.flags };
+                const message = { sharedkey_local_update: true, id: wire.id, channel_id: wire.channel_id, content: payload.content, attachments: payload.attachments, embeds: payload.embeds, mentions: payload.mentions ?? [], mention_everyone: payload.mention_everyone, mention_roles: payload.mention_roles, pinned: stored?.pinned ?? wire.pinned, flags: stored?.flags ?? wire.flags };
                 dispatch({ type: "MESSAGE_UPDATE", message });
             }
         });
     };
+    let retryQueued = false;
     const refreshMessages = (retry: boolean) => {
+        retryQueued ||= retry;
+        if (receiving()) return;
+        retry = retryQueued; retryQueued = false;
         if (!retry) { update(); return; }
         const messages = allWireMessages();
         const preparing = prepareHistory(native, messages);
         if (preparing) void preparing.then(update); else update();
     };
     refresh = refreshMessages;
+    const removePolicy = onReadingPolicyChange(refreshMessages);
     const removeFiles = onAttachmentReady(update);
     const removePreviews = onPreviewReady(update);
-    return () => { live = false; removeFiles(); removePreviews(); presented.clear(); delivered.clear(); if (refresh === refreshMessages) refresh = undefined; };
+    return () => { live = false; removePolicy(); removeFiles(); removePreviews(); presented.clear(); delivered.clear(); if (refresh === refreshMessages) refresh = undefined; };
 }

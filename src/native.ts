@@ -21,9 +21,11 @@ CspPolicies["*.klipy.com"] = ["img-src", "media-src"];
 
 export async function resolveGifPreview(_: IpcMainInvokeEvent, url: string) { return resolveGif(url); }
 
+type PreviewMode = "manual" | "automatic" | "never";
 type Method = "shared" | "automatic" | "password";
 interface ChannelConfig {
     enabled: boolean; current: string; keys: Record<string, string>; color?: string;
+    reading?: boolean; previews?: PreviewMode;
     method?: Method; methods?: Partial<Record<Method, string>>; exchange?: ExchangeState;
 }
 type Vault = Record<string, ChannelConfig>;
@@ -57,6 +59,7 @@ function load(): Vault {
         for (const [channelId, c] of Object.entries(candidate)) {
             checkId(channelId);
             if (!c || typeof c.enabled !== "boolean" || typeof c.current !== "string" || !c.keys || typeof c.keys !== "object" || Array.isArray(c.keys)) throw new Error("Invalid key vault. Sending was blocked.");
+            if ((c.reading !== undefined && typeof c.reading !== "boolean") || (c.previews !== undefined && !["manual", "automatic", "never"].includes(c.previews))) throw new Error("Invalid reading settings in key vault.");
             if (c.color !== undefined && !/^#[0-9a-f]{6}$/i.test(c.color)) throw new Error("Invalid message color in key vault.");
             for (const [id, key] of Object.entries(c.keys)) if (typeof key !== "string" || keyId(key) !== id) throw new Error("Invalid key vault. Sending was blocked.");
             if (c.current && !Object.hasOwn(c.keys, c.current)) throw new Error("Invalid key vault. Sending was blocked.");
@@ -88,6 +91,7 @@ export function channelInfo(_: IpcMainInvokeEvent, channelId: string) {
     return {
         enabled: c?.enabled ?? false, fingerprint: c?.current ?? "", keyCount: Object.keys(c?.keys ?? {}).length, color: c?.color ?? "#7d52ff",
         keyIds: Object.keys(c?.keys ?? {}),
+        reading: c?.reading ?? true, previews: c?.previews ?? "manual" as PreviewMode,
         method: c?.method ?? "shared" as Method,
         identityFingerprint: c?.exchange ? exchangeFingerprint(c.exchange) : "",
         identityVerified: c?.exchange?.verified ?? false,
@@ -99,7 +103,16 @@ export function channelInfo(_: IpcMainInvokeEvent, channelId: string) {
 
 // Rendering hints only: never expose the saved keys through this snapshot.
 export function channelStates(_: IpcMainInvokeEvent) {
-    return Object.fromEntries(Object.entries(load()).map(([id, c]) => [id, { enabled: c.enabled, color: c.color ?? "#7d52ff" }]));
+    return Object.fromEntries(Object.entries(load()).map(([id, c]) => [id, { enabled: c.enabled, color: c.color ?? "#7d52ff", reading: c.reading ?? true, previews: c.previews ?? "manual" as PreviewMode }]));
+}
+
+export function setReadingOptions(_: IpcMainInvokeEvent, channelId: string, reading: boolean, previews: PreviewMode) {
+    if (typeof reading !== "boolean" || !["manual", "automatic", "never"].includes(previews)) throw new Error("Invalid reading options.");
+    return serial(channelId, () => {
+        const c = config(channelId) ?? { enabled: false, current: "", keys: {}, method: "shared" as Method };
+        persist({ ...load(), [channelId]: { ...c, reading, previews } });
+        return channelInfo(_, channelId);
+    });
 }
 
 export function newKey(_: IpcMainInvokeEvent): string { return generateKey(); }

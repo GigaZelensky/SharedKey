@@ -23,6 +23,7 @@ import { encryptedEdit, installMessagePresentation } from "./MessagePresentation
 import { clearMessageCache, rememberPlaintext, retryFailedMessages } from "./MessageView";
 import type * as NativeTypes from "./native";
 import { EncryptionOptions } from "./Options";
+import { clearReadingPolicies, readingEnabled, rememberReadingPolicy } from "./ReadingPolicy";
 import { refreshReceivedMessages } from "./ReceiveMessages";
 import style from "./style.css?managed";
 import { wireMessage } from "./WireMessages";
@@ -41,7 +42,7 @@ function rememberChat(channelId: string, info: { enabled: boolean; color: string
 function initialChat(channelId: string): ChatDisplay {
     return chatDisplays.get(channelId) ?? { channelId, state:statesLoaded ? "off" : "loading", color:"#7d52ff" };
 }
-function chatUpdated(channelId: string, info: { enabled: boolean; color: string; }) { rememberChat(channelId,info); refresh(); }
+function chatUpdated(channelId: string, info: Awaited<ReturnType<typeof Native.channelInfo>>) { rememberReadingPolicy(channelId, info); rememberChat(channelId,info); refresh(); }
 
 const refresh = () => { retryFailedMessages(); retryFailedAttachments(); refreshReceivedMessages(true); subscribers.forEach(fn => fn()); };
 const errorText = (e: unknown) => e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "SharedKey failed. Sending was blocked.";
@@ -245,6 +246,7 @@ const LockButton: ChatBarButtonFactory = ({ channel, isAnyChat }) => {
 
 export function DecryptedMessage({ message }: { message: Message; }) {
     const version = useVersion();
+    if (!readingEnabled(message.channel_id)) return <MessagePaint message={message} native={Native} version={version} />;
     if (message.content?.startsWith(EXCHANGE_PREFIX)) return <div className="vc-sharedkey-exchange"><button type="button" onClick={() => openKeys(message.channel_id)}>Encryption setup</button></div>;
     return <MessagePaint message={message} native={Native} version={version} />;
 }
@@ -300,6 +302,7 @@ export default definePlugin({
     },
     isLocalImage: (src: string) => !!localImage(src),
     networkMessage: wireMessage,
+    blockNativeUnfurl: (message: Message) => wireMessage(message).content?.startsWith("[VCS1:"),
     patches: [{
         // This manager resolves codes extracted from message text over the
         // network. Give it the ciphertext, while native UI stores keep plaintext.
@@ -310,10 +313,18 @@ export default definePlugin({
         }
     }, {
         find: ".edited_timestamp?new Date(",
-        replacement: {
+        replacement: [{
             match: /null!=(\i)\.content&&""!==\1\.content&&/,
             replace: 'null!=$1.content&&(""!==$1.content||$1.sharedkey_local_update)&&'
-        }
+        }, {
+            // Native invite/gift widgets can fetch even without an embed.
+            // Keep the ordinary text/link renderer, without automatic unfurls.
+            match: /codedLinks:(\i\.\i\.NON_PARSED\.has\((\i)\.type\)\?\[\]:)/,
+            replace: "codedLinks:$self.blockNativeUnfurl($2)?[]:$1"
+        }, {
+            match: /giftCodes:(?=\(0,\i\.\i\)\((\i)\))/,
+            replace: "giftCodes:$self.blockNativeUnfurl($1)?[]:"
+        }]
     }, {
         // Use the native image-link labels for authenticated local images too.
         find: "native-send-sms",
@@ -344,6 +355,7 @@ export default definePlugin({
     contextMenus: {
         message: (children, { message }: { message: Message; }) => {
             message = wireMessage(message);
+            if (!readingEnabled(message.channel_id)) return;
             if (!message.content?.startsWith("[VCS1:")) return;
             const group = findGroupChildrenByChildId("copy-text", children) ?? children;
             const copyIndex = group.findIndex(item => item?.props?.id === "copy-text");
@@ -365,7 +377,7 @@ export default definePlugin({
         const generation = ++statesGeneration;
         if (typeof Native.channelStates === "function") void Native.channelStates().then(states => {
             if (!running || generation !== statesGeneration) return;
-            for (const [id, info] of Object.entries(states)) if (!chatDisplays.has(id)) rememberChat(id, info);
+            for (const [id, info] of Object.entries(states)) if (!chatDisplays.has(id)) { rememberReadingPolicy(id, info); rememberChat(id, info); }
             statesLoaded = true; refresh();
             const channelId = SelectedChannelStore.getChannelId();
             if (channelId && ChannelStore.getChannel(channelId)?.type === 1) void scanExchange(channelId);
@@ -420,6 +432,7 @@ export default definePlugin({
         removeMessageAccessory("SharedKey");
         clearMessageCache();
         restorers.splice(0).reverse().forEach(fn => fn());
+        clearReadingPolicies();
         refresh();
     },
     async onBeforeMessageSend(channelId, message, options, props) {

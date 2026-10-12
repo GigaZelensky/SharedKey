@@ -34,6 +34,8 @@ The plugin calls Discord's existing file, image, and media components. It does n
 
 Use a test chat and non-sensitive files. Verify with another client that the stored content is ciphertext and each attachment is one encrypted `.vcs` file.
 
+- Turn reading off and back on: verify raw text/files, reply excerpts, notifications, and removal of message paint; verify new outgoing text stays encrypted while reading is off.
+- With On click, verify no supported link-preview request before pressing Load preview. Repeat with cached URLs, edited messages, Never, Automatic, and a pending GIF resolve while disabling reading.
 - Toggle the lock with a left-click; open options with a right-click.
 - Switch between two encrypted chats, then into an unencrypted chat. Check lock state, accent, and saved color.
 - Send text, a file-only ZIP, an image/GIF, and a file with a caption. Confirm there is one visible attachment per upload.

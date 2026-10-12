@@ -9,6 +9,7 @@ import type { Message } from "@vencord/discord-types";
 import { clearAttachmentCache } from "./FileAttachments";
 import type { SharedKeyNative } from "./Options";
 import { clearPreviewEmbeds } from "./PreviewEmbeds";
+import { ensureReadingPolicy, readingEnabled } from "./ReadingPolicy";
 
 const plaintext = new Map<string, string>();
 const failures = new Set<string>();
@@ -37,6 +38,11 @@ export function rememberPlaintext(channelId: string, authorId: string, content: 
 // and virtual list. Wire messages remain untouched; only the local view cache is
 // filled, including failures so those rows start at their final error height.
 export function prepareHistory(native: SharedKeyNative, messages: Message[]): Promise<void> | undefined {
+    const waits = Array.from(new Set(messages.map(message => message.channel_id).filter(Boolean))).flatMap(channel => ensureReadingPolicy(native, channel) ?? []);
+    const prepare = () => primeHistory(native, messages.filter(message => readingEnabled(message.channel_id)));
+    return waits.length ? Promise.all(waits).then(prepare) : prepare();
+}
+function primeHistory(native: SharedKeyNative, messages: Message[]): Promise<void> | undefined {
     const missing = new Map<string, Message>();
     const waits: Promise<unknown>[] = [];
     for (const message of messages) {
@@ -56,6 +62,7 @@ export function prepareHistory(native: SharedKeyNative, messages: Message[]): Pr
     }
     return Promise.all([...waits, ...Array.from(groups, async ([channelId, group]) => {
         for (let offset = 0; offset < group.length; offset += 200) {
+            if (!readingEnabled(channelId)) return;
             const chunk = group.slice(offset, offset + 200);
             if (typeof native.decryptMessages !== "function") {
                 await Promise.all(chunk.map(message => decrypt(native, message, messageToken(message)).catch(() => {})));
@@ -78,6 +85,7 @@ export function requestPlaintext(native: SharedKeyNative, message: Message) { re
 
 
 function decrypt(native: SharedKeyNative, message: Message, token: string): Promise<string> {
+    if (!readingEnabled(message.channel_id)) return Promise.reject(new Error("Reading is disabled for this chat."));
     if (plaintext.has(token)) return Promise.resolve(plaintext.get(token)!);
     if (failures.has(token)) return Promise.reject(new Error("Unable to decrypt message."));
     let request = pending.get(token);

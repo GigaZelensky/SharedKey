@@ -9,6 +9,7 @@ import { findByCodeLazy } from "@webpack";
 import { registerPreviewImage } from "./LocalImageActions";
 import { discordImageUrl, gifUrl, previewLinks, refreshDiscordImage } from "./mediaLinks";
 import type { SharedKeyNative } from "./Options";
+import { previewsAllowed } from "./ReadingPolicy";
 
 const refreshAttachmentUrl = findByCodeLazy(".toURLSafe(", "?await", "??") as (url: string) => Promise<string>;
 const entries = new Map<string, { embed?: any; pending?: Promise<void>; expires: number; unregister?: () => void; }>();
@@ -18,8 +19,10 @@ export function onPreviewReady(callback: () => void) { listeners.add(callback); 
 export function clearPreviewEmbeds() { generation++; entries.forEach(entry => entry.unregister?.()); entries.clear(); }
 export function cachedPreviewEmbeds(text: string): any[] { return previewLinks(text).flatMap(link => entries.get(link.url)?.embed ?? []); }
 
-export async function preparePreviewEmbeds(native: SharedKeyNative, text: string): Promise<void> {
+export async function preparePreviewEmbeds(native: SharedKeyNative, text: string, message: any): Promise<void> {
+    if (!previewsAllowed(message)) return;
     await Promise.all(previewLinks(text).map(async link => {
+        if (!previewsAllowed(message)) return;
         const cached = entries.get(link.url);
         if (cached?.pending) return cached.pending;
         if (cached && cached.expires > Date.now()) return;
@@ -33,7 +36,7 @@ export async function preparePreviewEmbeds(native: SharedKeyNative, text: string
         entry.pending = (async () => {
             const resolved = link.page ? await native.resolveGifPreview(link.url)
                 : { url: discordImageUrl(link.url) ? await refreshDiscordImage(link.url, refreshAttachmentUrl) : link.url, video: /\.mp4(?:\?|$)/i.test(link.url) };
-            if (!resolved) return;
+            if (!resolved || !previewsAllowed(message)) return;
             let width: number; let height: number;
             if (resolved.video) {
                 const video = document.createElement("video");

@@ -9,42 +9,50 @@ import type { Message } from "@vencord/discord-types";
 import { useEffect, useLayoutEffect, useRef, useState } from "@webpack/common";
 
 import { attachmentError, attachmentView, encryptedAttachments, prepareAttachmentViews, retainAttachmentViews } from "./FileAttachments";
+import { previewLinks } from "./mediaLinks";
 import { highlightedTint, messageTint } from "./MessageColors";
 import { joinMessageRun } from "./MessageRuns";
 import { cachedPlaintext, decryptionFailed, requestPlaintext } from "./MessageView";
 import type { SharedKeyNative } from "./Options";
-import { preparePreviewEmbeds } from "./PreviewEmbeds";
+import { cachedPreviewEmbeds, preparePreviewEmbeds } from "./PreviewEmbeds";
+import { allowMessagePreview, ensureReadingPolicy, onReadingPolicyChange, previewMode, previewsAllowed, readingEnabled } from "./ReadingPolicy";
 import { receiveCachedMessage } from "./ReceiveMessages";
 import { wireMessage } from "./WireMessages";
 
 export function MessagePaint({ message, native, version }: { message: Message; native: SharedKeyNative; version: number; }) {
     const wire = wireMessage(message);
-    const protectedMessage = wire.content?.startsWith("[VCS1:") || !!encryptedAttachments(wire).length;
+    const [, renderPolicy] = useState(0);
+    const [loadingPreview, setLoadingPreview] = useState(false);
+    const [previewError, setPreviewError] = useState(false);
+    const readable = readingEnabled(wire.channel_id);
+    const protectedMessage = readable && (wire.content?.startsWith("[VCS1:") || !!encryptedAttachments(wire).length);
     const [color, setColor] = useState("#7d52ff");
     const ref = useRef<HTMLSpanElement>(null);
     const text = cachedPlaintext(wire) ?? (message !== wire ? message.content : undefined);
     const pendingFiles = encryptedAttachments(wire).filter(file => file.size <= 64 * 1024 * 1024 + 4200 && !attachmentView(wire.channel_id, file.id));
+    useEffect(() => onReadingPolicyChange(() => renderPolicy(value => value + 1)), []);
+    useEffect(() => { void ensureReadingPolicy(native, wire.channel_id)?.then(() => renderPolicy(value => value + 1)); }, [wire.channel_id]);
     useEffect(() => {
         if (!protectedMessage) return;
         let live = true;
         void native.channelInfo(wire.channel_id).then(info => { if (live) setColor(info.color); }).catch(() => {});
         return () => { live = false; };
-    }, [wire.channel_id, version]);
+    }, [wire.channel_id, version, readable]);
     useEffect(() => {
         if (!protectedMessage) return;
         receiveCachedMessage(message);
         const node = ref.current;
         let live = true;
         const load = () => {
-            if (wire.content?.startsWith("[VCS1:")) void requestPlaintext(native, wire).then(value => { if (live) void preparePreviewEmbeds(native, value); }).catch(() => {});
-            else if (text) void preparePreviewEmbeds(native, text);
+            if (wire.content?.startsWith("[VCS1:")) void requestPlaintext(native, wire).then(value => { if (live) void preparePreviewEmbeds(native, value, wire); }).catch(() => {});
+            else if (text) void preparePreviewEmbeds(native, text, wire);
             void prepareAttachmentViews(native, wire);
         };
         const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) { observer.disconnect(); load(); } }, { rootMargin: "600px" });
         const row = node?.closest("li");
         if (row) observer.observe(row); else load();
         return () => { live = false; observer.disconnect(); };
-    }, [wire, version]);
+    }, [wire, version, readable, previewsAllowed(wire)]);
     useLayoutEffect(() => {
         const row = ref.current?.closest("li") as HTMLElement | null;
         if (!row || !protectedMessage) return;
@@ -62,7 +70,13 @@ export function MessagePaint({ message, native, version }: { message: Message; n
         };
     }, [message, color, protectedMessage]);
     if (!protectedMessage) return null;
+    const previewButton = text && previewMode(wire.channel_id) === "manual" && previewLinks(text).length > 0 && (!previewsAllowed(wire) || !cachedPreviewEmbeds(text).length);
     return <span ref={ref} className="vc-sharedkey-paint">
+        {previewButton && <TextButton disabled={loadingPreview} title="Contacts the preview host; Discord links may contact Discord." onClick={async () => {
+            allowMessagePreview(wire); setLoadingPreview(true); setPreviewError(false);
+            try { await preparePreviewEmbeds(native, text, wire); setPreviewError(!cachedPreviewEmbeds(text).length); }
+            finally { setLoadingPreview(false); }
+        }}>{loadingPreview ? "Loading preview…" : previewError ? "Retry preview" : "Load preview"}</TextButton>}
         {pendingFiles.filter(file => attachmentError(wire.channel_id, file.id)).map(file => <span key={file.id} className="vc-sharedkey-file-loading">
             {attachmentError(wire.channel_id, file.id)}
             {attachmentError(wire.channel_id, file.id) && <TextButton onClick={() => { void prepareAttachmentViews(native, wire, true); }}>Retry</TextButton>}

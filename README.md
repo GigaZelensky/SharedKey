@@ -46,13 +46,15 @@ A closed, colored lock means encryption is on. The message box uses the same acc
 
 Type and attach files normally. SharedKey encrypts them before upload and displays decrypted messages with your chosen background color.
 
-Replies, edits, and desktop notifications use decrypted text. Images and GIFs use Discord's attachment components and media viewer. Right-click an image to copy or save it; click a document's filename to save it. The original filename is encrypted with the file contents.
+With **Decrypt received messages** enabled, replies, edits, and desktop notifications use decrypted text. Turn it off in the chat’s encryption options to restore ciphertext, encrypted attachment cards, and ordinary message backgrounds. This is independent of **Encrypt messages**, which controls new outgoing messages. Images and GIFs use Discord's attachment components and media viewer. Right-click an image to copy or save it; click a document's filename to save it. The original filename is encrypted with the file contents.
 
-Mentions and replies to you keep Discord's yellow edge marker and add a subtle yellow tint over your accent. Discord receives no mention ping from encrypted text. Incoming messages decrypt before Discord constructs its local message records. Discord then handles their text, edit labels, reactions, attachment cards, and media viewer. Supported media links, including Discord emoji images, become native embeds after their metadata loads.
+Mentions and replies to you keep Discord's yellow edge marker and add a subtle yellow tint over your accent. Discord receives no mention ping from encrypted text. Incoming messages decrypt before Discord constructs its local message records. Discord then handles their text, edit labels, reactions, attachment cards, and media viewer. Supported media links become native embeds after you choose **Load preview**. Each chat has **Link previews: On click / Automatic / Never**; **On click** is the default, including for existing chats.
 
 History text decrypts before its load event reaches Discord's stores, so the message list can measure plaintext on its first render. Discord's local records contain plaintext; SharedKey retains the original ciphertext separately for encryption guards and “View encrypted original.” Messages and attachments stored on Discord remain encrypted.
 
 Media previews still need to download or resolve metadata locally, so their dimensions can arrive after the text. SharedKey supplies raw attachment and embed data to Discord's existing conversion pipeline; it does not provide a replacement message or media renderer. Website previews that require Discord's server to read the plaintext cannot be reproduced automatically.
+
+Preview loading currently supports Tenor/Klipy GIF links and supported Discord image/GIF/emoji URLs. Other website links stay as links; this does not add a general website title/description scraper. Native invite/gift unfurl widgets are suppressed for encrypted text. Encrypted file attachments still decrypt automatically while reading is enabled. Preview permission is local to that message and this app session; editing the message, changing the preview mode, or turning reading off clears it. Requests already sent cannot be recalled.
 
 Right-click an encrypted text message and choose **View encrypted original** to inspect its ciphertext. Turning encryption off keeps old messages readable. Replacing a key retains earlier keys for that chat.
 

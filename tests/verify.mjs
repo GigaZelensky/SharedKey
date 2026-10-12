@@ -833,9 +833,32 @@ const nativeUrl = pathToFileURL(path.join(work, "native.mjs"));
 const native = await import(nativeUrl);
 native.saveKey(null, channel, key);
 check("Startup rendering snapshot contains state/color but no saved keys", () => {
-    assert.deepEqual(native.channelStates(null)[channel], { enabled: true, color: "#7d52ff" });
+    assert.deepEqual(native.channelStates(null)[channel], {
+        enabled: true,
+        color: "#7d52ff",
+        reading: true,
+        previews: "manual",
+    });
     assert.equal(JSON.stringify(native.channelStates(null)).includes(key), false);
 });
+const beforeReadingChange = native.channelInfo(null, channel);
+await native.setReadingOptions(null, channel, false, "never");
+check("Reading and preview options persist independently of outgoing encryption and keys", () => {
+    const info = native.channelInfo(null, channel);
+    assert.equal(info.enabled, beforeReadingChange.enabled);
+    assert.equal(info.fingerprint, beforeReadingChange.fingerprint);
+    assert.equal(info.reading, false);
+    assert.equal(info.previews, "never");
+    const sent = native.prepareOutgoing(null, channel, author, "still encrypted with reading off");
+    assert.equal(crypto.decryptText(sent.content, keys, channel, author), "still encrypted with reading off");
+});
+const readingReload = await import(nativeUrl + "?reading-options");
+check("Disabled reading and Never previews survive a native restart", () => {
+    assert.equal(readingReload.channelInfo(null, channel).reading, false);
+    assert.equal(readingReload.channelInfo(null, channel).previews, "never");
+});
+await native.setReadingOptions(null, channel, true, "manual");
+assert.throws(() => native.setReadingOptions(null, channel, false, "invalid"));
 check("Default encrypted message color is purple", () =>
     assert.equal(native.channelInfo(null, channel).color, "#7d52ff"),
 );

@@ -13,6 +13,7 @@ import { cachedAttachmentInfo } from "./FileAttachments";
 import { incomingEvents, mapIncomingMessages } from "./IncomingEvents";
 import { cachedPlaintext, prepareHistory, requestPlaintext } from "./MessageView";
 import { SharedKeyNative } from "./Options";
+import { ensureReadingPolicy, readingEnabled } from "./ReadingPolicy";
 import { installReceiveUpdates, noteReceivedPayload, receivedPayload, refreshReceivedMessages } from "./ReceiveMessages";
 import { allWireMessages, clearWireMessages, getWireMessage, rememberIncoming, rememberReference, wasEncrypted, wireMessage } from "./WireMessages";
 
@@ -36,6 +37,7 @@ export function installMessagePresentation(native: SharedKeyNative) {
     let queue: Promise<any> | undefined;
     let receiving = 0;
     function notificationBody(body: string, tracking: any = {}): string | Promise<string> {
+        if (tracking.channel_id && !readingEnabled(tracking.channel_id)) return body;
         if (body.includes(EXCHANGE_PREFIX)) return "Encryption setup";
         const fragment = body.match(/\[VCS1:[A-Za-z0-9_-]+\]?/)?.[0];
         const candidate = tracking.channel_id && tracking.message_id ? MessageStore.getMessage(tracking.channel_id, tracking.message_id) : undefined;
@@ -44,7 +46,11 @@ export function installMessagePresentation(native: SharedKeyNative) {
         const message = stored && encrypted(stored.content) && (!prefix || stored.content.startsWith(prefix)) ? stored
             : fragment ? contexts.get(fragment) ?? (prefix && prefix.length >= 22 ? Array.from(contexts.values()).find(m => m.content.startsWith(prefix)) : undefined) : undefined;
         if (!message) return "Encrypted message";
-        const present = (text: string) => text.trim() || (message.attachments?.length ? "Attachment" : "Message");
+        const present = (text: string) => readingEnabled(message.channel_id) ? text.trim() || (message.attachments?.length ? "Attachment" : "Message") : body;
+        if (!readingEnabled(message.channel_id)) {
+            const preparing = ensureReadingPolicy(native, message.channel_id);
+            return preparing ? preparing.then(() => readingEnabled(message.channel_id) ? requestPlaintext(native, message).then(present, () => "Encrypted message") : body) : body;
+        }
         const cached = cachedPlaintext(message);
         if (cached !== undefined) return present(cached);
         return requestPlaintext(native, message).then(present, () => "Encrypted message");
@@ -69,7 +75,7 @@ export function installMessagePresentation(native: SharedKeyNative) {
             const source = mapIncomingMessages(event, channelId, (raw, channel) => {
                 const stored = getWireMessage(channel, raw.id) ?? MessageStore.getMessage(channel, raw.id);
                 const wire = rememberIncoming({ ...(stored ? { author: stored.author } : {}), ...raw }, channel);
-                if (wire.content?.startsWith("[VCS1:")) page.push(wire);
+                if (getWireMessage(channel, wire.id)) page.push(wire);
                 rememberReference(wire, channel);
                 return wire;
             });
@@ -91,6 +97,7 @@ export function installMessagePresentation(native: SharedKeyNative) {
             else for (const key of edits) if (key.startsWith(`${event.channelId}:`)) edits.delete(key);
         }
         if (event.type === "MESSAGE_START_EDIT") {
+            if (!readingEnabled(event.channelId)) return original.call(this, event, ...args);
             const sequence = ++editGeneration;
             const view = MessageStore.getMessage(event.channelId, event.messageId);
             const stored = view ? wireMessage(view) : undefined;

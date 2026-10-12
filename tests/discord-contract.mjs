@@ -56,7 +56,7 @@ const dependencies = {
         Ay: ({ message }) => message.mentions.includes("self"),
     },
 };
-function load(source) {
+function load(source, globals = {}) {
     const exports = {};
     const require = (id) => dependencies[id] ?? {};
     require.d = (target, getters) =>
@@ -65,7 +65,7 @@ function load(source) {
             Object.fromEntries(Object.entries(getters).map(([name, get]) => [name, { get }])),
         );
     require.n = (value) => () => value;
-    vm.runInNewContext(`(${source})`, { URL, Date, Map, Set })(null, exports, require);
+    vm.runInNewContext(`(${source})`, { URL, Date, Map, Set, ...globals })(null, exports, require);
     return exports;
 }
 const embeds = (dependencies[659674] = load(moduleSource(659674)));
@@ -169,4 +169,36 @@ assert.ok(
 );
 console.log(
     "PASS current native upload guard anchors execute before upload metadata/reservation and byte transfer",
+);
+
+const codedLinkPatch =
+    /codedLinks:([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.NON_PARSED\.has\(([A-Za-z_$][\w$]*)\.type\)\?\[\]:)/;
+const giftPatch = /giftCodes:(?=\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\(([A-Za-z_$][\w$]*)\))/;
+assert.equal([...source.matchAll(new RegExp(codedLinkPatch.source, "g"))].length, 1);
+assert.equal([...source.matchAll(new RegExp(giftPatch.source, "g"))].length, 1);
+let codedCalls = 0,
+    giftCalls = 0;
+dependencies[721779].Ay = () => {
+    codedCalls++;
+    return ["native-link"];
+};
+dependencies[45938].e7 = () => {
+    giftCalls++;
+    return ["native-gift"];
+};
+const controlled = load(
+    source
+        .replace(codedLinkPatch, "codedLinks:$self.blockNativeUnfurl($2)?[]:$1")
+        .replace(giftPatch, "giftCodes:$self.blockNativeUnfurl($1)?[]:"),
+    { $self: { blockNativeUnfurl: (message) => message.id === "private" } },
+);
+const privateRecord = controlled.rh({ ...raw, id: "private" });
+assert.equal(codedCalls + giftCalls, 0);
+assert.equal(privateRecord.content, raw.content);
+assert.equal(privateRecord.codedLinks.length, 0);
+assert.equal(privateRecord.giftCodes.length, 0);
+controlled.rh(raw);
+assert.ok(codedCalls > 0 && giftCalls > 0);
+console.log(
+    "PASS native converter leaves encrypted links as ordinary text without generating automatic invite/gift widgets; ordinary messages unchanged",
 );

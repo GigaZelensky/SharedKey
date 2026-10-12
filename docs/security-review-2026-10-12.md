@@ -29,7 +29,7 @@ The reviewed ordinary text, edit, and fresh-upload paths encrypt their payloads.
 
 ## Remaining limits
 
-Automatic image/GIF previews expose the requested URL to its host. Requests for Discord CDN resources go to Discord; refreshing expired attachment links sends their URLs to Discord's refresh API. Supported previews remain enabled to preserve the requested rendering behavior. Decrypted uploaded files instead use local blob URLs after the encrypted download.
+Automatic image/GIF previews expose the requested URL to its host. Requests for Discord CDN resources go to Discord; refreshing expired attachment links sends their URLs to Discord's refresh API. This describes 0.4.1. In 0.5.0, supported previews default to per-message click-to-load; the chat can instead select Automatic or Never. Native invite/gift widget generation is also suppressed for encrypted text. Decrypted uploaded files instead use local blob URLs after the encrypted download.
 
 The coded-link patch covers one verified background consumer. It does not establish that every renderer, telemetry event, extension, reporting flow, search action, or explicit user action avoids content-derived requests. No exhaustive inspection of Discord's entire client or live traffic capture was performed. A no-disclosure claim would therefore be unjustified.
 

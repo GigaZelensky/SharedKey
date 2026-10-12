@@ -46,7 +46,13 @@ class NativeChannel {
     }
 }
 let raw = new NativeChannel([]);
-const notifications = { showNotification() {}, playNotificationSound() {} };
+const notificationBodies = [];
+const notifications = {
+    showNotification(...args) {
+        notificationBodies.push(args[2]);
+    },
+    playNotificationSound() {},
+};
 globalThis.receivePipelineStore = {
     getMessage: (_channel, id) => raw.get(id),
     getMessages: () => raw,
@@ -73,7 +79,13 @@ globalThis.receivePipelineDispatcher = {
             raw = new NativeChannel(raw._array.filter((m) => m.id !== event.id));
     },
 };
+let imageRequests = 0,
+    previewRequests = 0,
+    fileRequests = 0;
 globalThis.Image = class {
+    set src(_value) {
+        imageRequests++;
+    }
     naturalWidth = 128;
     naturalHeight = 128;
     decode() {
@@ -90,7 +102,7 @@ await writeFile(
 const entry = path.join(work, "entry.ts");
 await writeFile(
     entry,
-    `export * from '../../src/ReceiveMessages'; export * from '../../src/MessageView'; export * from '../../src/WireMessages'; export * from '../../src/FileAttachments'; export * from '../../src/PreviewEmbeds'; export * from '../../src/MessagePresentation'; export * from '../../src/MessageColors';`,
+    `export * from '../../src/ReadingPolicy'; export * from '../../src/ReceiveMessages'; export * from '../../src/MessageView'; export * from '../../src/WireMessages'; export * from '../../src/FileAttachments'; export * from '../../src/PreviewEmbeds'; export * from '../../src/MessagePresentation'; export * from '../../src/MessageColors';`,
 );
 const outfile = path.join(work, "model.mjs");
 await build({
@@ -113,6 +125,9 @@ let decryptCalls = 0;
 let batchCalls = 0;
 let keyFixed = false;
 const native = {
+    async channelInfo() {
+        return { reading: true, previews: "manual" };
+    },
     async decryptMessage(_channel, _author, text) {
         decryptCalls++;
         if (text === "[VCS1:bad]") throw new Error("Bad key");
@@ -128,6 +143,7 @@ const native = {
         );
     },
     async decryptAttachment() {
+        fileRequests++;
         return {
             encrypted: true,
             filename: "photo.gif",
@@ -136,6 +152,7 @@ const native = {
         };
     },
     async resolveGifPreview() {
+        previewRequests++;
         return { url: "https://media.tenor.com/test.gif", video: false };
     },
 };
@@ -233,7 +250,8 @@ const emoji = {
     embeds: [],
 };
 model.rememberPlaintext(channel, author, emoji.content, emojiText);
-await model.preparePreviewEmbeds(native, emojiText);
+model.allowMessagePreview(emoji);
+await model.preparePreviewEmbeds(native, emojiText, emoji);
 const dto = model.receivedPayload(emoji, channel);
 assert.equal(dto.embeds.length, 1);
 assert.equal(dto.embeds[0].type, "image");
@@ -340,6 +358,102 @@ assert.equal(
 );
 console.log(
     "PASS real history/pin/search actions, nested raw payloads, partial edits, key retry, cached records on enable, and plaintext surviving cache eviction",
+);
+
+model.rememberReadingPolicy(channel, { reading: false, previews: "manual" });
+await new Promise((resolve) => setTimeout(resolve, 25));
+assert.equal(receivePipelineStore.getMessage(channel, editable.id).content, "[VCS1:newedit]");
+assert.equal(model.receivedPayload(file, channel).attachments[0].filename, "encrypted.vcs");
+const hidden = {
+    id: "650000000000000010",
+    channel_id: channel,
+    author: { id: author },
+    content: "[VCS1:hidden]",
+};
+const decryptionCount = decryptCalls + batchCalls;
+await receivePipelineDispatcher.dispatch({ type: "MESSAGE_CREATE", message: hidden });
+assert.equal(receivePipelineStore.getMessage(channel, hidden.id).content, hidden.content);
+assert.equal(decryptCalls + batchCalls, decryptionCount);
+const fileCount = fileRequests;
+await model.prepareAttachmentViews(native, {
+    ...file,
+    attachments: [{ ...file.attachments[0], id: "567890123456789999" }],
+});
+assert.equal(fileRequests, fileCount);
+notifications.showNotification("title", "icon", hidden.content, {
+    channel_id: channel,
+    message_id: hidden.id,
+});
+assert.equal(notificationBodies.at(-1), hidden.content);
+assert.ok(model.encryptedEdit(channel, hidden.id));
+model.rememberReadingPolicy(channel, { reading: true, previews: "manual" });
+await new Promise((resolve) => setTimeout(resolve, 25));
+assert.equal(
+    receivePipelineStore.getMessage(channel, hidden.id).content,
+    "First line\nSecond line\nThird line",
+);
+const linkText = "https://tenor.com/view/private-click-test";
+const clicked = { ...hidden, id: "650000000000000011", content: "[VCS1:click]", embeds: [] };
+model.rememberPlaintext(channel, author, clicked.content, linkText);
+let beforeRequests = imageRequests + previewRequests;
+await model.preparePreviewEmbeds(native, linkText, clicked);
+assert.equal(imageRequests + previewRequests, beforeRequests);
+assert.equal(model.receivedPayload(clicked, channel).embeds.length, 0);
+model.allowMessagePreview(clicked);
+await model.preparePreviewEmbeds(native, linkText, clicked);
+assert.ok(imageRequests + previewRequests > beforeRequests);
+assert.equal(model.receivedPayload(clicked, channel).embeds.length, 1);
+const unclicked = { ...clicked, id: "650000000000000012" };
+assert.equal(
+    model.receivedPayload(unclicked, channel).embeds.length,
+    0,
+    "cached URLs do not grant another message permission",
+);
+assert.equal(
+    model.receivedPayload(
+        { ...unclicked, embeds: [{ type: "image", url: "https://example.com/preexisting-preview" }] },
+        channel,
+    ).embeds.length,
+    0,
+    "preexisting raw embeds cannot bypass manual mode",
+);
+const changedLink = { ...clicked, content: "[VCS1:edited-link]" };
+model.rememberPlaintext(channel, author, changedLink.content, linkText);
+assert.equal(model.previewsAllowed(changedLink), false, "edits invalidate per-message grants");
+model.rememberReadingPolicy(channel, { reading: true, previews: "never" });
+beforeRequests = imageRequests + previewRequests;
+model.allowMessagePreview(clicked);
+await model.preparePreviewEmbeds(native, linkText, clicked);
+assert.equal(imageRequests + previewRequests, beforeRequests);
+assert.equal(model.receivedPayload(clicked, channel).embeds.length, 0);
+model.rememberIncoming({ ...unclicked, embeds: [] }, channel);
+model.rememberReadingPolicy(channel, { reading: true, previews: "automatic" });
+assert.equal(model.receivedPayload(unclicked, channel).embeds.length, 1);
+// If policy changes while resolving a GIF page, its response must not start the
+// subsequent image request or become a displayed embed.
+let completeResolution;
+const delayedNative = {
+    ...native,
+    resolveGifPreview: () =>
+        new Promise((resolve) => {
+            completeResolution = resolve;
+        }),
+};
+const delayed = { ...clicked, id: "650000000000000013", content: "[VCS1:delayed-preview]" };
+const delayedText = "https://tenor.com/view/delayed-private-test";
+model.rememberPlaintext(channel, author, delayed.content, delayedText);
+const delayedLoad = model.preparePreviewEmbeds(delayedNative, delayedText, delayed);
+const beforeImages = imageRequests;
+model.rememberReadingPolicy(channel, { reading: false, previews: "manual" });
+completeResolution({ url: "https://media.tenor.com/late.gif", video: false });
+await delayedLoad;
+assert.equal(imageRequests, beforeImages);
+assert.equal(model.receivedPayload(delayed, channel).content, delayed.content);
+assert.equal(model.cachedPreviewEmbeds(delayedText).length, 0);
+model.rememberReadingPolicy(channel, { reading: true, previews: "manual" });
+assert.equal(model.previewsAllowed(clicked), false, "switching reading off clears previous grants");
+console.log(
+    "PASS raw reading view, no decryption/download while off, raw notifications, preserved edit protection, per-message consent, cached URL isolation, never/automatic modes, edited links and in-flight policy changes",
 );
 
 restore();

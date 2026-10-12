@@ -32,7 +32,7 @@ function OptionsFrame({ embedded, channelName, rootProps, children }: { embedded
 }
 
 export function EncryptionOptions({ channelId, channelName, rootProps, native, onUpdate, onMethod, onExchange, embedded }: OptionsProps) {
-    const [info, setInfo] = useState<ChannelInfo>({ enabled: false, fingerprint: "", keyCount: 0, keyIds: [], color: "#7d52ff", method: "shared", identityFingerprint: "", identityVerified: false, identityChanged: false, exchangePending: false, exchangeExpired: false });
+    const [info, setInfo] = useState<ChannelInfo>({ enabled: false, reading: true, previews: "manual", fingerprint: "", keyCount: 0, keyIds: [], color: "#7d52ff", method: "shared", identityFingerprint: "", identityVerified: false, identityChanged: false, exchangePending: false, exchangeExpired: false });
     const [key, setKey] = useState("");
     const [savedKey, setSavedKey] = useState("");
     const [reveal, setReveal] = useState(false);
@@ -136,6 +136,19 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
                         onChange={enabled => action(async () => { const next = await native.setEnabled(channelId, enabled); setInfo(next); onUpdate(next); })} />
                 </div>
 
+                <div className="vc-sharedkey-toggle-row">
+                    <FormSwitch title="Decrypt received messages" description="Turn off to show original ciphertext and encrypted files." hideBorder value={info.reading}
+                        disabled={busy || !loaded} onChange={reading => action(async () => { const next = await native.setReadingOptions(channelId, reading, info.previews); setInfo(next); onUpdate(next); })} />
+                </div>
+                <div className="vc-sharedkey-method">
+                    <label htmlFor="vc-sharedkey-previews">Link previews</label>
+                    <select id="vc-sharedkey-previews" value={info.previews} disabled={busy || !loaded || !info.reading}
+                        onChange={e => { const previews = e.target.value as ChannelInfo["previews"]; void action(async () => { const next = await native.setReadingOptions(channelId, info.reading, previews); setInfo(next); onUpdate(next); }); }}>
+                        <option value="manual">On click</option><option value="automatic">Automatic</option><option value="never">Never</option>
+                    </select>
+                </div>
+                <p className="vc-sharedkey-preview-note">Loading a preview contacts its host. Discord links may contact Discord. This does not make requests anonymous.</p>
+
                 <div className="vc-sharedkey-method">
                     <label htmlFor="vc-sharedkey-method">Key setup</label>
                     <select id="vc-sharedkey-method" value={info.method} disabled={busy || !loaded}
@@ -225,7 +238,7 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
                         <Button size="small" variant="secondary" disabled={busy || !info.fingerprint || (info.method === "automatic" && info.identityChanged)} onClick={() => action(() => file(false))}>Encrypt file…</Button>
                         <Button size="small" variant="secondary" disabled={busy || !info.keyCount} onClick={() => action(() => file(true))}>Decrypt file…</Button>
                     </div>
-                    <p className="vc-sharedkey-note">Attachments encrypt on send and decrypt automatically here.</p>
+                    <p className="vc-sharedkey-note">Attachments encrypt when sending is enabled and decrypt when reading is enabled.</p>
                 </div>
 
                 <details className="vc-sharedkey-help">

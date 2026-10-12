@@ -8,6 +8,7 @@ import type { Message, MessageAttachment } from "@vencord/discord-types";
 import { findByCodeLazy } from "@webpack";
 
 import type { SharedKeyNative } from "./Options";
+import { ensureReadingPolicy, readingEnabled } from "./ReadingPolicy";
 
 interface CachedFile { url: string; blob: Blob; filename: string; mime: string; width?: number; height?: number; refs: number; touched: number; }
 const files = new Map<string, CachedFile>();
@@ -32,6 +33,8 @@ export function retainAttachmentViews(channelId: string, attachments: MessageAtt
     return () => held.forEach(release);
 }
 export async function prepareAttachmentViews(native: SharedKeyNative, message: Message, retry = false) {
+    await ensureReadingPolicy(native, message.channel_id);
+    if (!readingEnabled(message.channel_id)) return;
     await Promise.all(encryptedAttachments(message).filter(file => file.size <= 64 * 1024 * 1024 + 4200).map(async attachment => {
         const key = `${message.channel_id}:${attachment.id}`;
         if (loadErrors.has(key) && !retry) return;
@@ -40,6 +43,7 @@ export async function prepareAttachmentViews(native: SharedKeyNative, message: M
             const file = await acquire(native, message.channel_id, attachment, key);
             requestAnimationFrame(() => requestAnimationFrame(() => release(file)));
         } catch (error) {
+            if (!readingEnabled(message.channel_id)) return;
             if (String(error).includes("SHAREDKEY_ORDINARY_ATTACHMENT")) return;
             if (loadErrors.size >= 500) loadErrors.delete(loadErrors.keys().next().value!);
             loadErrors.set(key, "Unable to decrypt attachment. Check this chat's key.");
@@ -84,6 +88,7 @@ async function acquire(native: SharedKeyNative, channelId: string, attachment: M
         if (!request) {
             const startedGeneration = generation;
             request = Promise.resolve().then(async () => {
+                if (!readingEnabled(channelId)) throw new Error("Reading is disabled.");
                 let { url } = attachment;
                 try {
                     const original = new URL(url);
@@ -92,6 +97,7 @@ async function acquire(native: SharedKeyNative, channelId: string, attachment: M
                         if (refreshed.protocol === "https:" && !refreshed.username && !refreshed.password && !refreshed.port && /^(?:cdn\.discordapp\.com|media\.discordapp\.net)$/.test(refreshed.hostname) && refreshed.pathname === original.pathname) url = refreshed.href;
                     }
                 } catch { /* Native download reports an unavailable attachment. */ }
+                if (!readingEnabled(channelId)) throw new Error("Reading is disabled.");
                 return native.decryptAttachment(channelId, url);
             }).then(async result => {
                 if (generation !== startedGeneration) throw new Error("Attachment view closed.");
