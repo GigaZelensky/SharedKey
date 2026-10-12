@@ -26,6 +26,15 @@ jobs:
                   node-version: 24
                   cache: npm
             - run: npm ci
+            - name: Read Vencord revision for UI component tests
+              id: ui-version
+              run: node -e "require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'commit=' + require('./vencord.json').commit + '\n')"
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+              with:
+                  repository: Vendicated/Vencord
+                  ref: ${{ steps.ui-version.outputs.commit }}
+                  path: .vencord
+                  persist-credentials: false
             - run: npm run format:check
             - run: npm test
             - run: npm run test:browser

@@ -24,12 +24,13 @@ import { clearMessageCache, rememberPlaintext, retryFailedMessages } from "./Mes
 import type * as NativeTypes from "./native";
 import { EncryptionOptions } from "./Options";
 import { clearReadingPolicies, readingEnabled, rememberReadingPolicy } from "./ReadingPolicy";
+import { withReadingPreferences } from "./ReadingPreferences";
 import { refreshReceivedMessages } from "./ReceiveMessages";
 import style from "./style.css?managed";
 import { nativeVideoProps } from "./VideoPresentation";
 import { wireMessage } from "./WireMessages";
 
-const Native = VencordNative.pluginHelpers.SharedKey as PluginNative<typeof NativeTypes>;
+const Native = withReadingPreferences(VencordNative.pluginHelpers.SharedKey as PluginNative<typeof NativeTypes>);
 const subscribers = new Set<() => void>();
 interface ChatDisplay { channelId: string; state: "on" | "off" | "loading" | "error"; color: string; }
 const chatDisplays = new Map<string, ChatDisplay>();

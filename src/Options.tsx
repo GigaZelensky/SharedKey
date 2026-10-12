@@ -44,6 +44,7 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
     const [forgetting, setForgetting] = useState(false);
     const [offlineId, setOfflineId] = useState("");
     const inFlight = useRef(false);
+    const revision = useRef(0);
     const form = useRef<HTMLDivElement>(null);
     const dirty = key.trim() !== savedKey;
     const selectedOfflineId = info.keyIds.includes(offlineId) ? offlineId : info.fingerprint || info.keyIds[0] || "";
@@ -71,6 +72,7 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
             .then(([nextInfo, nextKey]) => {
                 if (!live) return;
                 setInfo(nextInfo);
+                onUpdate(nextInfo);
                 setKey(nextKey);
                 setSavedKey(nextKey);
                 setLoaded(true);
@@ -81,19 +83,32 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
     }, [channelId]);
 
     useEffect(() => {
-        if (info.method !== "automatic") return;
+        if (!loaded) return;
         let live = true;
-        const timer = setInterval(() => {
-            void native.channelInfo(channelId).then(next => {
-                if (live && JSON.stringify(next) !== JSON.stringify(info)) { setInfo(next); onUpdate(next); }
+        const sync = () => {
+            if (inFlight.current) return;
+            const started = revision.current;
+            const current = () => live && !inFlight.current && started === revision.current;
+            void native.channelInfo(channelId).then(async next => {
+                if (!current() || JSON.stringify(next) === JSON.stringify(info)) return;
+                if (next.method === "shared" && (next.fingerprint !== info.fingerprint || next.method !== info.method)) {
+                    const nextKey = next.fingerprint ? await native.revealKey(channelId) : "";
+                    if (!current()) return;
+                    setSavedKey(nextKey);
+                    if (!dirty) { setKey(nextKey); setReveal(false); }
+                }
+                if (current()) { setInfo(next); onUpdate(next); }
             }).catch(() => {});
-        }, 1500);
-        return () => { live = false; clearInterval(timer); };
-    }, [channelId, info]);
+        };
+        const timer = setInterval(sync, 1500);
+        window.addEventListener("focus", sync);
+        return () => { live = false; clearInterval(timer); window.removeEventListener("focus", sync); };
+    }, [channelId, info, loaded, dirty]);
 
     async function action(fn: () => Promise<void>) {
         if (inFlight.current) return;
         inFlight.current = true;
+        revision.current++;
         setBusy(true);
         setStatus("");
         setError(false);
@@ -130,9 +145,11 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
     return (
         <OptionsFrame rootProps={rootProps} channelName={channelName} embedded={embedded}>
             <div className="vc-sharedkey-options" ref={form}>
+                {!loaded && !error && <p role="status" className="vc-sharedkey-status">Loading encryption settings…</p>}
+                {status && <p role={error ? "alert" : "status"} className={error ? "vc-sharedkey-error vc-sharedkey-status" : "vc-sharedkey-status"}>{status}</p>}
                 <div className="vc-sharedkey-toggle-row">
-                    <FormSwitch title="Encrypt messages" description="Only in this chat" hideBorder value={info.enabled}
-                        disabled={busy || !loaded || (!info.fingerprint && !info.enabled)}
+                    <FormSwitch title="Encrypt outgoing messages" description="New messages and uploads in this chat" hideBorder value={info.enabled}
+                        disabled={busy || !loaded}
                         onChange={enabled => action(async () => { const next = await native.setEnabled(channelId, enabled); setInfo(next); onUpdate(next); })} />
                 </div>
 
@@ -142,7 +159,7 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
                 </div>
                 <div className="vc-sharedkey-method">
                     <label htmlFor="vc-sharedkey-previews">Link previews</label>
-                    <select id="vc-sharedkey-previews" value={info.previews} disabled={busy || !loaded || !info.reading}
+                    <select id="vc-sharedkey-previews" value={info.previews} disabled={busy || !loaded}
                         onChange={e => { const previews = e.target.value as ChannelInfo["previews"]; void action(async () => { const next = await native.setReadingOptions(channelId, info.reading, previews); setInfo(next); onUpdate(next); }); }}>
                         <option value="manual">On click</option><option value="automatic">Automatic</option><option value="never">Never</option>
                     </select>
@@ -166,7 +183,7 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
                     </div>
                     <div className="vc-sharedkey-key-field">
                         <input id="vc-sharedkey-input" type={reveal ? "text" : "password"} value={key}
-                            disabled={busy || !loaded} onChange={e => { setKey(e.target.value); setStatus(""); }}
+                            disabled={busy || !loaded} onChange={e => { revision.current++; setKey(e.target.value); setStatus(""); }}
                             placeholder="Paste a shared key" spellCheck={false} autoComplete="off" aria-describedby="vc-sharedkey-key-note" />
                         <button type="button" className="vc-sharedkey-icon-button" title={reveal ? "Hide key" : "Show key"}
                             aria-label={reveal ? "Hide key" : "Show key"} aria-pressed={reveal} disabled={busy || !key}
@@ -258,7 +275,7 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
                         })}>Copy key for offline decryption</TextButton>
                     </>}
                 </details>
-                {status && <p role={error ? "alert" : "status"} className={error ? "vc-sharedkey-error vc-sharedkey-status" : "vc-sharedkey-status"}>{status}</p>}
+
             </div>
         </OptionsFrame>
     );

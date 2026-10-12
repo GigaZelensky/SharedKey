@@ -142,6 +142,7 @@ check("Old-key messages remain readable after rotation", () =>
 // Bundle the real renderer module with a minimal Vencord boundary. This exercises
 // the actual listeners, low-level send/edit wrappers and pre-network upload guard.
 const stub = `
+const values = new Map(); export const get=async key=>values.get(key); export const set=async (key,value)=>{values.set(key,value);};
 export default x => x;
 export const ChatBarButton = () => null;
 export const Button = () => null;

@@ -18,6 +18,8 @@ Discord and other observers can see participants, timestamps, ciphertext sizes, 
 
 ## Local data
 
+Reading and preview preferences are stored locally in Vencord’s IndexedDB and are not synced settings. They contain no encryption keys. Existing native viewing preferences remain defaults until overridden locally.
+
 Keys are stored separately from Vencord's synced settings in `settings/sharedkey-vault.bin`, protected by Electron `safeStorage`. On Windows this uses the current user's OS-protected storage. An unavailable or corrupt vault blocks guarded sends; it is not silently replaced.
 
 Other plugins and software with access to your Discord process can read drafts, decrypted content, and keys. A compromised endpoint is outside this design's protection. Text-processing plugins that send content elsewhere can also expose plaintext.

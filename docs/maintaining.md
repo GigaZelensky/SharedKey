@@ -26,7 +26,11 @@ The plugin calls Discord's existing file, image, and media components. It does n
 
 `ReceiveMessages.ts` supplies plaintext, decrypted attachment URLs, and raw media metadata. Discord performs its ordinary raw-to-record and embed conversions. Message-store and referenced-message-store getters are untouched. Local backing records contain plaintext; `WireMessages.ts` keeps ciphertext separately for outgoing edit guards and original-message inspection. Local metadata updates preserve native edit timestamps, flags, and pinned state. A narrowly scoped converter patch permits an empty caption in these local updates, which Discord otherwise ignores.
 
+`ReadingPreferences.ts` gives the dialog, startup snapshot, and receive pipeline consistent reading defaults and locally persisted overrides, including with a native backend that lacks the newer reading fields/setter. It forwards cryptographic operations directly to the backend. The dialog polls all key modes and ignores stale reads during writes.
+
 `MessagePaint.tsx` adds the accent and attachment error/retry state. Discord renders the message and completed attachments. Link metadata and decrypted file dimensions arrive asynchronously; text history is primed before display, but media loading can still change row height.
+
+`tests/options-ui.mjs` mounts the real options component and the pinned Vencord FormSwitch/Switch in React, using real IndexedDB persistence. It checks legacy backend defaults, mouse interactions, independent preferences, reloads, external updates, and visible failures. It needs the Vencord source checkout at `VENCORD_PATH` (or `.vencord`).
 
 `npm test` includes receive-boundary checks with API mocks. `npm run test:discord` additionally accepts a `DISCORD_BUNDLE` environment variable pointing to a separately obtained current Discord web bundle. It executes the actual message/embed conversion and inline-media classification functions with dependency stubs. This detects changed action names, embed contracts, and the local empty-content patch; it is not a substitute for the live checks below. Never commit or package that bundle.
 
