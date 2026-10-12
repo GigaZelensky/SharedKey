@@ -12,6 +12,7 @@ export async function localVideoMetadata(url: string, timeout = 5000): Promise<{
     video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
+    let frameCallback: number | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
         return await new Promise((resolve, reject) => {
@@ -38,13 +39,13 @@ export async function localVideoMetadata(url: string, timeout = 5000): Promise<{
                     }, "image/png");
                 } catch { fail(); }
             };
-            let seekingFrame = false;
+            let waitingForFrame = false;
             video.onloadeddata = () => {
-                if (settled || seekingFrame) return;
-                if (Number.isFinite(video.duration) && video.duration > 0.1) {
-                    seekingFrame = true;
-                    video.onseeked = capture;
-                    video.currentTime = Math.min(0.1, video.duration / 2);
+                if (settled || waitingForFrame) return;
+                waitingForFrame = true;
+                if (typeof video.requestVideoFrameCallback === "function") {
+                    frameCallback = video.requestVideoFrameCallback(() => { video.pause(); capture(); });
+                    void video.play().catch(fail);
                 } else capture();
             };
             video.src = url;
@@ -52,6 +53,8 @@ export async function localVideoMetadata(url: string, timeout = 5000): Promise<{
         });
     } finally {
         clearTimeout(timer);
+        if (frameCallback !== undefined) video.cancelVideoFrameCallback(frameCallback);
+        video.pause();
         video.onloadeddata = null;
         video.onerror = null;
         video.onseeked = null;

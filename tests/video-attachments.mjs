@@ -110,11 +110,11 @@ try {
             poster.src = view.poster;
             await poster.decode();
             const pixelCanvas = document.createElement("canvas");
-            pixelCanvas.width = 1;
-            pixelCanvas.height = 1;
+            pixelCanvas.width = poster.naturalWidth;
+            pixelCanvas.height = poster.naturalHeight;
             const pixelCtx = pixelCanvas.getContext("2d");
-            pixelCtx.drawImage(poster, 0, 0, 1, 1);
-            const pixel = [...pixelCtx.getImageData(0, 0, 1, 1).data];
+            pixelCtx.drawImage(poster, 0, 0);
+            const pixel = [...pixelCtx.getImageData(160, 90, 1, 1).data];
             const player = document.createElement("video");
             player.muted = true;
             player.src = dto.url;
