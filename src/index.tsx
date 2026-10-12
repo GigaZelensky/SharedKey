@@ -16,7 +16,7 @@ import { ChannelStore, Menu, MessageActions, MessageStore, Modal, openModal, Rea
 
 import { bindComposerAccent } from "./ComposerAccent";
 import { EncryptionMethod, EXCHANGE_PREFIX } from "./exchangeWire";
-import { localImage, retryFailedAttachments } from "./FileAttachments";
+import { localFile, localImage, retryFailedAttachments } from "./FileAttachments";
 import { installLocalImageActions } from "./LocalImageActions";
 import { MessagePaint } from "./MessagePaint";
 import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
@@ -301,6 +301,8 @@ export default definePlugin({
         }
     },
     isLocalImage: (src: string) => !!localImage(src),
+    isLocalVideo: (src?: string) => !!src && localFile(src)?.mime.startsWith("video/"),
+    videoPoster: (src: string) => localFile(src)?.poster ?? null,
     networkMessage: wireMessage,
     blockNativeUnfurl: (message: Message) => wireMessage(message).content?.startsWith("[VCS1:"),
     patches: [{
@@ -344,6 +346,21 @@ export default definePlugin({
         // which invalidates them. Keep local media URLs intact in its image loader.
         find: "ImageLoaderUtils.getSrcWithWidthAndHeight",
         replacement: { match: /if\((\i)\.startsWith\("data:image"\)/, replace: 'if($1.startsWith("blob:")||$1.startsWith("data:image")' }
+    }, {
+        // Native media viewer poster lookup; preserve the local video source.
+        find: /if\("VIDEO"===\i\.type&&null!=\i\.proxyUrl\)/,
+        replacement: {
+            match: /function (\i)\((\i)\)\{(?=if\(null==\2\)return null;if\("VIDEO"===\2\.type&&null!=\2\.proxyUrl\))/,
+            replace: "$&if($self.isLocalVideo($2?.proxyUrl??$2?.url))return $self.videoPoster($2.proxyUrl??$2.url);"
+        }
+    }, {
+        // Native attachment thumbnails ordinarily append format=webp to a CDN
+        // URL. Decrypted blobs instead have an independently decoded local poster.
+        find: "srcUnfurledMediaItem:",
+        replacement: {
+            match: /if\(\i\)\{let (\i)=\i\.\i\.toURLSafe\((\i)\);if\(null==\1\)return null;\1\.searchParams\.append\("format","webp"\),(\i)=\1\.toString\(\)\}/,
+            replace: "if($self.isLocalVideo($2))$3=$self.videoPoster($2);else $&"
+        }
     }, {
         find: "async uploadFiles(",
         replacement: { match: /async uploadFiles\((\i)\)\{/, replace: "$&await $self.guardUploads($1);" }

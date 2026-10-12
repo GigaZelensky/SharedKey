@@ -9,8 +9,9 @@ import { findByCodeLazy } from "@webpack";
 
 import type { SharedKeyNative } from "./Options";
 import { ensureReadingPolicy, readingEnabled } from "./ReadingPolicy";
+import { localVideoMetadata } from "./VideoMetadata";
 
-interface CachedFile { url: string; blob: Blob; filename: string; mime: string; width?: number; height?: number; refs: number; touched: number; }
+interface CachedFile { url: string; blob: Blob; filename: string; mime: string; width?: number; height?: number; duration?: number; poster?: string; refs: number; touched: number; }
 const files = new Map<string, CachedFile>();
 const imageUrls = new Map<string, CachedFile>();
 export function localImage(url: string) { return imageUrls.get(url.split("#")[0]); }
@@ -61,13 +62,14 @@ function trimFiles() {
         imageUrls.delete(file.url);
         total -= file.blob.size;
         URL.revokeObjectURL(file.url);
+        if (file.poster) URL.revokeObjectURL(file.poster);
         queueMicrotask(() => fileListeners.forEach(callback => callback()));
     }
 }
 
 export function clearAttachmentCache() {
     generation++;
-    files.forEach(file => URL.revokeObjectURL(file.url));
+    files.forEach(file => { URL.revokeObjectURL(file.url); if (file.poster) URL.revokeObjectURL(file.poster); });
     files.clear();
     imageUrls.clear();
     ordinaryFiles.clear();
@@ -107,7 +109,7 @@ async function acquire(native: SharedKeyNative, channelId: string, attachment: M
                     throw new Error("SHAREDKEY_ORDINARY_ATTACHMENT");
                 }
                 const blob = new Blob([new Uint8Array(result.data).buffer], { type: result.mime });
-                const loaded = { url: URL.createObjectURL(blob), blob, filename: result.filename, mime: result.mime, refs: 0, touched: Date.now() };
+                const loaded: CachedFile = { url: URL.createObjectURL(blob), blob, filename: result.filename, mime: result.mime, refs: 0, touched: Date.now() };
                 if (result.mime.startsWith("image/")) {
                     const image = new Image();
                     image.src = loaded.url;
@@ -116,7 +118,11 @@ async function acquire(native: SharedKeyNative, channelId: string, attachment: M
                         Object.assign(loaded, { width: image.naturalWidth, height: image.naturalHeight });
                     } catch { /* An unsupported image falls back to Discord's file card. */ }
                 }
-                if (generation !== startedGeneration) { URL.revokeObjectURL(loaded.url); throw new Error("Attachment view closed."); }
+                if (result.mime.startsWith("video/")) {
+                    try { Object.assign(loaded, await localVideoMetadata(loaded.url)); }
+                    catch { /* Unsupported codecs or damaged media remain downloadable file cards. */ }
+                }
+                if (generation !== startedGeneration) { if (loaded.poster) URL.revokeObjectURL(loaded.poster); URL.revokeObjectURL(loaded.url); throw new Error("Attachment view closed."); }
                 files.set(key, loaded);
                 if (result.mime.startsWith("image/")) imageUrls.set(loaded.url, loaded);
                 queueMicrotask(() => fileListeners.forEach(callback => callback()));

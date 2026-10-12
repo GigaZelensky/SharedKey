@@ -41,7 +41,7 @@ export function receivedPayload(source: any, channelId: string): any {
         if (!local) return file;
         markProtectedMessage(channelId, wire.id);
         const url = local.url + "#" + encodeURIComponent(local.filename);
-        return { ...file, filename: local.filename, url, proxy_url: url, content_type: local.mime, size: local.blob.size, width: local.width, height: local.height };
+        return { ...file, filename: local.filename, url, proxy_url: url, content_type: local.mime, size: local.blob.size, width: local.width, height: local.height, duration_secs: local.duration };
     });
     const user = UserStore.getCurrentUser()?.id;
     const ref = wire.message_reference ?? wire.messageReference;

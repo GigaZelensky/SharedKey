@@ -82,7 +82,7 @@ export function mediaType(data: Buffer, filename: string): string {
     if (data.subarray(4, 8).toString("ascii") === "ftyp") {
         const brand = data.subarray(8, 12).toString("ascii");
         if (["avif", "avis"].includes(brand)) return "image/avif";
-        if (/\.(mp4|m4v)$/i.test(filename) && ["isom", "iso2", "mp41", "mp42", "avc1", "M4V "].includes(brand)) return "video/mp4";
+        if (/\.(mp4|m4v)$/i.test(filename)) return "video/mp4";
     }
     if (/\.webm$/i.test(filename) && data.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))) return "video/webm";
     if (/\.ogg$/i.test(filename) && data.subarray(0, 4).toString("ascii") === "OggS") return "audio/ogg";

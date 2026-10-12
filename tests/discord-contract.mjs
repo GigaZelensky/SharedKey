@@ -202,3 +202,69 @@ assert.ok(codedCalls > 0 && giftCalls > 0);
 console.log(
     "PASS native converter leaves encrypted links as ordinary text without generating automatic invite/gift widgets; ordinary messages unchanged",
 );
+
+const mediaSource = moduleSource(731068);
+const posterPatch =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{(?=if\(null==\2\)return null;if\("VIDEO"===\2\.type&&null!=\2\.proxyUrl\))/;
+const thumbSource = moduleSource(256265);
+const thumbPatch =
+    /if\([A-Za-z_$][\w$]*\)\{let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.toURLSafe\(([A-Za-z_$][\w$]*)\);if\(null==\1\)return null;\1\.searchParams\.append\("format","webp"\),([A-Za-z_$][\w$]*)=\1\.toString\(\)\}/;
+assert.equal([...mediaSource.matchAll(new RegExp(posterPatch.source, "g"))].length, 1);
+assert.equal([...thumbSource.matchAll(new RegExp(thumbPatch.source, "g"))].length, 1);
+assert.equal(
+    [...bundle.matchAll(/if\("VIDEO"===[A-Za-z_$][\w$]*\.type&&null!=[A-Za-z_$][\w$]*\.proxyUrl\)/g)].length,
+    1,
+);
+assert.equal(bundle.split("srcUnfurledMediaItem:").length - 1, 1);
+dependencies[155718] = { TD: { LOADED_SUCCESS: "loaded" }, I5: {} };
+dependencies[59318] = { u: (name) => /\.png$/.test(name), AE: (name) => /\.(mp4|webm)$/.test(name) };
+dependencies[998218] = { A: { toURLSafe: (value) => new URL(value) } };
+dependencies[582128] = { useMemo: (callback) => callback() };
+dependencies[885386] = {
+    X6: { getSetting: () => true, useSetting: () => true },
+    hD: { useSetting: () => false },
+    rs: { useSetting: () => false },
+};
+dependencies[403362] = { Vq: Boolean };
+constants.sbO = { CONTAINS_EXPLICIT_MEDIA: 1, IS_ANIMATED: 2, IS_THUMBNAIL: 4, IS_SPOILER: 8 };
+const localVideo = "blob:https://discord.com/video#clip.mp4",
+    localPoster = "blob:https://discord.com/poster";
+const videoScope = { $self: { isLocalVideo: (url) => url === localVideo, videoPoster: () => localPoster } };
+const media = (dependencies[731068] = load(
+    mediaSource.replace(
+        posterPatch,
+        "$&if($self.isLocalVideo($2?.proxyUrl??$2?.url))return $self.videoPoster($2.proxyUrl??$2.url);",
+    ),
+    videoScope,
+));
+const thumbs = load(
+    thumbSource.replace(thumbPatch, "if($self.isLocalVideo($2))$3=$self.videoPoster($2);else $&"),
+    videoScope,
+);
+const attachment = {
+    id: "456",
+    filename: "clip.mp4",
+    url: localVideo,
+    proxy_url: localVideo,
+    width: 320,
+    height: 180,
+    content_type: "video/mp4",
+};
+const nativeVideo = media.Rr(attachment, raw);
+assert.equal(nativeVideo.type, "VIDEO");
+assert.equal(nativeVideo.url, localVideo);
+assert.equal(media.fj(nativeVideo), localPoster);
+const thumbnail = thumbs.yC(
+    { attachments: [attachment], messageSnapshots: [], embeds: [], components: [] },
+    false,
+)[0];
+assert.equal(thumbnail.src, localPoster);
+assert.equal(thumbnail.isVideo, true);
+assert.equal(thumbnail.width, 320);
+assert.equal(
+    media.fj({ type: "VIDEO", proxyUrl: "https://cdn.discordapp.com/clip.mp4" }),
+    "https://cdn.discordapp.com/clip.mp4?format=webp",
+);
+console.log(
+    "PASS actual native video classification, attachment thumbnail and media-viewer poster paths use local blobs; ordinary CDN posters unchanged",
+);

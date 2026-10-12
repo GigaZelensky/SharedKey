@@ -922,6 +922,24 @@ const pngBytes = Buffer.from(
 globalThis.fetch = async () => new Response(native.encryptUpload(null, channel, pngBytes, "picture.png"));
 check("PNG is recognized by decrypted bytes", () => {});
 assert.equal((await native.decryptAttachment(null, channel, attachmentAddress)).mime, "image/png");
+for (const ext of ["mp4", "webm"]) {
+    const videoBytes = await readFile(path.join(root, "tests", "fixtures", `local-video.${ext}`));
+    const encryptedVideo = native.encryptUpload(null, channel, videoBytes, `recording.${ext}`);
+    globalThis.fetch = async () => new Response(encryptedVideo);
+    const receivedVideo = await native.decryptAttachment(null, channel, attachmentAddress);
+    check(`Authenticated ${ext} bytes retain their original content and video MIME`, () => {
+        assert.equal(receivedVideo.mime, `video/${ext}`);
+        assert.deepEqual(Buffer.from(receivedVideo.data), videoBytes);
+    });
+}
+const alternateBrand = Buffer.from(await readFile(path.join(root, "tests", "fixtures", "local-video.mp4")));
+alternateBrand.write("iso4", 8, "ascii");
+globalThis.fetch = async () =>
+    new Response(native.encryptUpload(null, channel, alternateBrand, "recording.mp4"));
+const alternateVideo = await native.decryptAttachment(null, channel, attachmentAddress);
+check("MP4 recognition accepts ISO BMFF brands beyond the previous narrow list", () =>
+    assert.equal(alternateVideo.mime, "video/mp4"),
+);
 const tamperedAttachment = Uint8Array.from(gifEncrypted);
 tamperedAttachment[tamperedAttachment.length - 1] ^= 1;
 globalThis.fetch = async () => new Response(tamperedAttachment);

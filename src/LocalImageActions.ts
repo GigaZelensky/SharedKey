@@ -27,7 +27,7 @@ export function installLocalImageActions(native: SharedKeyNative) {
         const link = (event.target as Element | null)?.closest<HTMLAnchorElement>("a[href]");
         const file = link && localFile(link.href);
         if (!file) return;
-        if (/^(?:image|video|audio)\//.test(file.mime) && !link!.hasAttribute("download")) return;
+        if (/^(?:image|video|audio)\//.test(file.mime) && !link!.hasAttribute("download") && (file.mime.startsWith("audio/") || (file.width && file.height))) return;
         event.preventDefault(); event.stopImmediatePropagation();
         void file.blob.arrayBuffer().then(bytes => native.saveDecryptedAttachment(file.filename, new Uint8Array(bytes))).catch(() => showToast("Could not save this file."));
     };
