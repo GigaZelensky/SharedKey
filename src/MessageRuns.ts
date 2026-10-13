@@ -17,7 +17,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
         const rows = new Map<HTMLElement, number>();
         const saved = new Map<HTMLElement, Map<string, [string, string]>>();
         let frame = 0;
-        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-seam", "--vc-sharedkey-gap-fill", "--vc-sharedkey-gap-hover"];
+        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-seam", "--vc-sharedkey-gap-fill"];
         function reset(element: HTMLElement) {
             const original = saved.get(element);
             if (!original) return;
@@ -40,8 +40,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
                     `${gap}px`, `${2 / (window.devicePixelRatio || 1)}px`,
-                    gapPaint(element, getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill")),
-                    gapPaint(element, getComputedStyle(element).getPropertyValue("--vc-sharedkey-hover"))
+                    gapPaint(element, getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"))
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });
                 if (!element.classList.contains("vc-sharedkey-run-continuation")) element.classList.add("vc-sharedkey-run-continuation");

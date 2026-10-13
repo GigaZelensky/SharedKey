@@ -71,7 +71,6 @@
     pointer-events: none;
     z-index: 0;
 }
-.vc-sharedkey-run-continuation:hover::after { background: var(--vc-sharedkey-gap-hover); }
 
 .vc-sharedkey-composer-surface { transition: background-color 120ms ease-out, box-shadow 120ms ease-out, border-color 120ms ease-out; }
 .vc-sharedkey-composer-initial { transition: none !important; }

@@ -195,6 +195,11 @@ try {
     await page.click("#action");
     const hovered = await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor);
     assert.notEqual(hovered, resting);
+    assert.equal(
+        await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor),
+        restingGap,
+        "Hover changes the message body, never the paint filling the gap between authors",
+    );
     await page.mouse.move(590, 590);
     assert.equal(await page.$eval("#action", (node) => node === document.activeElement), true);
     assert.equal(await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor), resting);
@@ -211,7 +216,7 @@ try {
         "rgb(240, 178, 50)",
     );
     console.log(
-        "PASS hover clears after pointer exit with a focused action; gap tint resets and local/native yellow bars remain",
+        "PASS body hover clears after pointer exit with a focused action; inter-message gap tint stays constant and local/native yellow bars remain",
     );
     console.log(
         `PASS ${checked} pixel cases: fractional rows, 100/125/150/200% scaling, zero/16/24px gaps, dark/light backgrounds, no dark or doubled-tint seam, foreground preserved, unchanged scroll geometry. Old shadow reproduced ${oldSeams} dark pixels.`,
