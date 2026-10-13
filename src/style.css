@@ -50,6 +50,8 @@
 .vc-sharedkey-original { padding: 12px; font-family: var(--font-code); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .vc-sharedkey-decrypt-error [id^="message-content-"] { color: var(--text-feedback-critical, var(--text-danger, #ff5c5c)) !important; }
 .vc-sharedkey-paint:empty { display: none; }
+/* The hidden marker must not keep an otherwise-empty native accessory grid padded. */
+.vc-sharedkey-row div:has(> .vc-sharedkey-paint:only-child:empty) { display: none !important; }
 .vc-sharedkey-file-loading { display: block; padding: 8px 0; color: var(--text-muted); font-size: 13px; }
 .vc-sharedkey-options { box-sizing: border-box; }
 .vc-sharedkey-settings-chat { margin: 0 0 16px; color: var(--text-muted); font-size: 14px; }

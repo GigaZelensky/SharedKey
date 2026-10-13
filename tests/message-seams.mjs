@@ -186,6 +186,60 @@ try {
         "PASS an expired Discord GIF fails its original image preflight and decodes after signed-URL refresh",
     );
     await page.setViewport({ width: 600, height: 600, deviceScaleFactor: 1 });
+    // Discord's native accessory grid contributes 2px padding at each edge unless :empty.
+    await page.setContent(
+        `<style>body{margin:0}ol{margin:0;padding:0;list-style:none}.message_native{padding:2px 0}.content_native{height:44px}.accessories_native{display:grid;grid-auto-flow:row;row-gap:4px;padding:2px 0}.accessories_native:empty{display:none}</style><style>${css}</style><ol><li id=plain><div class=message_native><div class=content_native></div><div class=accessories_native></div></div></li><li id=encrypted><div class=message_native><div class=content_native></div><div class=accessories_native><span class=vc-sharedkey-paint></span></div></div></li></ol>`,
+    );
+    const heightOf = (id) => page.$eval("#" + id, (n) => n.getBoundingClientRect().height);
+    assert.equal(await heightOf("plain"), 48);
+    assert.equal(await heightOf("encrypted"), 52, "Negative control reproduces the hidden-marker extra 4px");
+    await page.$eval("#encrypted", (n) => n.classList.add("vc-sharedkey-row"));
+    assert.equal(
+        await heightOf("encrypted"),
+        await heightOf("plain"),
+        "Marker-only native grid must collapse to ordinary message height",
+    );
+    assert.equal(
+        await page.$eval(".vc-sharedkey-paint", (n) => n.closest("li").id),
+        "encrypted",
+        "Marker remains mounted for painting and cleanup",
+    );
+    for (const variant of ["attachment", "embed", "reaction", "other-plugin"]) {
+        await page.evaluate((variant) => {
+            for (const id of ["plain", "encrypted"]) {
+                const content = document.createElement("div");
+                content.style.height = "80px";
+                content.className = variant;
+                document.querySelector("#" + id + " .accessories_native").append(content);
+            }
+        }, variant);
+        assert.equal(
+            await heightOf("encrypted"),
+            await heightOf("plain"),
+            "Real " + variant + " retains ordinary grid padding/gaps",
+        );
+        await page.evaluate(
+            (variant) => document.querySelectorAll("." + variant).forEach((n) => n.remove()),
+            variant,
+        );
+    }
+    await page.$eval(".vc-sharedkey-paint", (n) => {
+        n.textContent = "Load preview";
+        n.style.height = "20px";
+        n.style.display = "block";
+    });
+    assert.equal(await heightOf("encrypted"), 72, "Visible SharedKey preview controls retain native spacing");
+    await page.$eval(".vc-sharedkey-paint", (n) => {
+        n.textContent = "";
+        n.style.removeProperty("height");
+        n.style.removeProperty("display");
+    });
+    assert.equal(await heightOf("encrypted"), 48, "Grid collapses again when feedback is removed");
+    await page.$eval("#encrypted", (n) => n.classList.remove("vc-sharedkey-row"));
+    assert.equal(await heightOf("encrypted"), 52, "Unprotected rows keep native styling");
+    console.log(
+        "PASS native accessory 4px regression, mounted marker, real accessories, visible feedback, and cleanup",
+    );
     // The same native hover rectangle must be tinted even when the virtual item is taller.
     for (const dpr of [1, 1.25, 1.5, 2]) {
         await page.setViewport({ width: 600, height: 600, deviceScaleFactor: dpr });
