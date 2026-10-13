@@ -16,8 +16,9 @@ export function joinMessageRun(row: HTMLElement): () => void {
     if (!manager) {
         const rows = new Map<HTMLElement, number>();
         const saved = new Map<HTMLElement, Map<string, [string, string]>>();
+        const surfaces = new Map<HTMLElement, HTMLElement>();
         let frame = 0;
-        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-seam", "--vc-sharedkey-gap-fill"];
+        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-seam", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom"];
         function reset(element: HTMLElement) {
             const original = saved.get(element);
             if (!original) return;
@@ -35,15 +36,25 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 const consecutive = element.classList.contains("vc-sharedkey-row") && previous?.classList.contains("vc-sharedkey-row")
                     && previous.dataset.sharedkeyChannel === element.dataset.sharedkeyChannel
                     && previous.style.getPropertyValue("--vc-sharedkey-color") === element.style.getPropertyValue("--vc-sharedkey-color");
-                const gap = consecutive && previous ? Math.max(0, element.getBoundingClientRect().top - previous.getBoundingClientRect().bottom) : 0;
-                if (!consecutive) { reset(element); continue; }
+                const bounds = element.getBoundingClientRect();
+                const surface = element.querySelector<HTMLElement>(":scope > [class*=message_]") ?? element;
+                if (surfaces.get(element) !== surface) {
+                    const oldSurface = surfaces.get(element);
+                    if (oldSurface && oldSurface !== element) resize.unobserve(oldSurface);
+                    surfaces.set(element, surface);
+                    if (surface !== element) resize.observe(surface);
+                }
+                const body = surface.getBoundingClientRect();
+                const previousBody = previous?.querySelector<HTMLElement>(":scope > [class*=message_]") ?? previous;
+                const gap = consecutive && previousBody ? Math.max(0, body.top - previousBody.getBoundingClientRect().bottom) : 0;
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
                     `${gap}px`, `${2 / (window.devicePixelRatio || 1)}px`,
-                    gapPaint(element, getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"))
+                    gapPaint(element, getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill")),
+                    `${body.top - bounds.top}px`, `${body.bottom - bounds.top}px`
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });
-                if (!element.classList.contains("vc-sharedkey-run-continuation")) element.classList.add("vc-sharedkey-run-continuation");
+                element.classList.toggle("vc-sharedkey-run-continuation", !!consecutive);
             }
         }
         function schedule() { if (!frame) frame = requestAnimationFrame(layout); }
@@ -54,11 +65,11 @@ export function joinMessageRun(row: HTMLElement): () => void {
         manager = { acquire(element) {
             rows.set(element, (rows.get(element) ?? 0) + 1);
             resize.observe(element);
-            schedule();
+            layout();
             return () => {
                 const count = rows.get(element)! - 1;
                 if (count) rows.set(element, count);
-                else { rows.delete(element); resize.unobserve(element); reset(element); }
+                else { rows.delete(element); resize.unobserve(element); const surface = surfaces.get(element); if (surface && surface !== element) resize.unobserve(surface); surfaces.delete(element); reset(element); }
                 if (!rows.size) {
                     observer.disconnect(); resize.disconnect(); cancelAnimationFrame(frame);
                     saved.forEach((_original, target) => reset(target)); managers.delete(parent);

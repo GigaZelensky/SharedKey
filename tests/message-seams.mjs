@@ -186,14 +186,92 @@ try {
         "PASS an expired Discord GIF fails its original image preflight and decodes after signed-URL refresh",
     );
     await page.setViewport({ width: 600, height: 600, deviceScaleFactor: 1 });
+    // The same native hover rectangle must be tinted even when the virtual item is taller.
+    for (const dpr of [1, 1.25, 1.5, 2]) {
+        await page.setViewport({ width: 600, height: 600, deviceScaleFactor: dpr });
+        for (const [height, top, bottom, margin] of [
+            [24, 0, 12, 0],
+            [73.25, 9, 3, 16],
+            [241.5, 3, 11, 24],
+        ]) {
+            await page.mouse.move(590, 590);
+            await page.setContent(
+                `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{padding:${top}px 0 ${bottom}px;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105)}.message_native{position:relative;height:${height}px;margin-top:${margin}px}.message_native:hover{background:rgba(125,82,255,.14)}</style><style>${css}</style><ol><li id=height-row data-sharedkey-channel=chat><div class=message_native></div></li></ol><script>${js}</script>`,
+            );
+            const box = await page.$eval(".message_native", (n) => ({
+                top: n.getBoundingClientRect().top,
+                height: n.getBoundingClientRect().height,
+            }));
+            await page.mouse.move(300, box.top + box.height / 2);
+            const nativeHover = await page.screenshot();
+            await page.mouse.move(590, 590);
+            await page.evaluate(async () => {
+                const row = document.querySelector("#height-row");
+                row.classList.add("vc-sharedkey-row");
+                window.cleanupHeight = runs.joinMessageRun(row);
+                await new Promise(requestAnimationFrame);
+                await new Promise(requestAnimationFrame);
+            });
+            const tint = await page.screenshot();
+            const masks = await page.evaluate(
+                async (images) => {
+                    const masks = [];
+                    for (const data of images) {
+                        const image = new Image();
+                        image.src = "data:image/png;base64," + data;
+                        await image.decode();
+                        const canvas = document.createElement("canvas");
+                        canvas.width = image.width;
+                        canvas.height = image.height;
+                        const ctx = canvas.getContext("2d");
+                        ctx.drawImage(image, 0, 0);
+                        const x = Math.floor(image.width / 2);
+                        const bg = ctx.getImageData(x, image.height - 1, 1, 1).data;
+                        masks.push(
+                            Array.from({ length: image.height }, (_, y) => {
+                                const p = ctx.getImageData(x, y, 1, 1).data;
+                                return p[0] !== bg[0] || p[1] !== bg[1] || p[2] !== bg[2];
+                            }),
+                        );
+                    }
+                    return masks;
+                },
+                [nativeHover.toString("base64"), tint.toString("base64")],
+            );
+            const differences = masks[0].flatMap((value, i) => (value !== masks[1][i] ? [i] : []));
+            assert.ok(
+                differences.every(
+                    (y) =>
+                        Math.abs(y - box.top * dpr) <= 1 || Math.abs(y - (box.top + box.height) * dpr) <= 1,
+                ),
+                `Only fractional edge rasterization can differ: ${JSON.stringify({ dpr, height, top, bottom, margin, differences })}`,
+            );
+            assert.ok(masks[1].some(Boolean), "Tint must paint the native message");
+            const measured = await page.$eval("#height-row", (n) => [
+                parseFloat(n.style.getPropertyValue("--vc-sharedkey-body-top")) +
+                    n.getBoundingClientRect().top,
+                parseFloat(n.style.getPropertyValue("--vc-sharedkey-body-bottom")) +
+                    n.getBoundingClientRect().top,
+            ]);
+            assert.deepEqual(
+                measured,
+                [box.top, box.top + box.height],
+                "Tint uses exact native hover geometry",
+            );
+            await page.evaluate(() => window.cleanupHeight());
+        }
+    }
+    console.log(
+        "PASS 12 native-hover/tint bounds comparisons (one device-pixel fractional-edge rasterization tolerance) across wrapper padding, margins, text/media heights, and display scales",
+    );
     await page.setContent(
         `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{height:80px;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105);--vc-sharedkey-gap-fill:rgb(17,11,36);--vc-sharedkey-gap-hover:rgb(13,9,27);--vc-sharedkey-gap:16px;--vc-sharedkey-seam:2px}.native-mentioned::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:rgb(240,178,50)}</style><style>${css}</style><ol><li id=row class="vc-sharedkey-row vc-sharedkey-run-continuation vc-sharedkey-mentioned"><div class=message_native><button id=action>Message action</button></div></li><li id=native class="vc-sharedkey-row native-mentioned" style="position:relative;margin-top:16px"><div class=message_native>Native reply mention</div></li></ol>`,
     );
     await page.mouse.move(590, 590);
-    const resting = await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor);
+    const resting = await page.$eval("#row", (node) => getComputedStyle(node).backgroundImage);
     const restingGap = await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor);
     await page.click("#action");
-    const hovered = await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor);
+    const hovered = await page.$eval("#row", (node) => getComputedStyle(node).backgroundImage);
     assert.notEqual(hovered, resting);
     assert.equal(
         await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor),
@@ -202,7 +280,7 @@ try {
     );
     await page.mouse.move(590, 590);
     assert.equal(await page.$eval("#action", (node) => node === document.activeElement), true);
-    assert.equal(await page.$eval("#row", (node) => getComputedStyle(node).backgroundColor), resting);
+    assert.equal(await page.$eval("#row", (node) => getComputedStyle(node).backgroundImage), resting);
     assert.equal(
         await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor),
         restingGap,
