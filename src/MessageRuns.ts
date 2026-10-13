@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { gapPaint } from "./GapPaint";
-
 // Paint-only strips cover native group gaps. Never rewrite margins, padding,
 // heights or scroll offsets: Discord's virtual list owns that geometry.
 const managers = new WeakMap<HTMLElement, { acquire(row: HTMLElement): () => void; }>();
@@ -18,7 +16,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
         const saved = new Map<HTMLElement, Map<string, [string, string]>>();
         const surfaces = new Map<HTMLElement, HTMLElement>();
         let frame = 0;
-        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-seam", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom"];
+        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-gap-top", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom"];
         function reset(element: HTMLElement) {
             const original = saved.get(element);
             if (!original) return;
@@ -46,15 +44,17 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 }
                 const body = surface.getBoundingClientRect();
                 const previousBody = previous?.querySelector<HTMLElement>(":scope > [class*=message_]") ?? previous;
-                const gap = consecutive && previousBody ? Math.max(0, body.top - previousBody.getBoundingClientRect().bottom) : 0;
+                const gapTop = consecutive && previousBody ? previousBody.getBoundingClientRect().bottom : body.top;
+                const gapBottom = body.top;
+                const gap = consecutive ? Math.max(0, gapBottom - gapTop) : 0;
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
-                    `${gap}px`, `${2 / (window.devicePixelRatio || 1)}px`,
-                    gapPaint(element, getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill")),
+                    `${gap}px`, `${gapTop - bounds.top}px`,
+                    getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"),
                     `${body.top - bounds.top}px`, `${body.bottom - bounds.top}px`
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });
-                element.classList.toggle("vc-sharedkey-run-continuation", !!consecutive);
+                element.classList.toggle("vc-sharedkey-run-continuation", !!consecutive && gap > 0);
             }
         }
         function schedule() { if (!frame) frame = requestAnimationFrame(layout); }

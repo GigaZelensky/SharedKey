@@ -186,6 +186,65 @@ try {
         "PASS an expired Discord GIF fails its original image preflight and decodes after signed-URL refresh",
     );
     await page.setViewport({ width: 600, height: 600, deviceScaleFactor: 1 });
+    // The old gap overlap masks the first two body pixels when that message is hovered.
+    for (const dpr of [1, 1.25, 1.5, 1.5625, 2]) {
+        await page.setViewport({ width: 600, height: 600, deviceScaleFactor: dpr });
+        await page.mouse.move(590, 590);
+        await page.setContent(
+            `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{--vc-sharedkey-color:#7d52ff;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105)}.message_native{height:48px;position:relative}.group{margin-top:17px}</style><style>${css}</style><style>.legacyOverlap .vc-sharedkey-row{background:var(--vc-sharedkey-fill)!important}.legacyOverlap .vc-sharedkey-row:has(>.message_native:hover){background:var(--vc-sharedkey-hover)!important}.legacyOverlap .vc-sharedkey-row>.message_native{background:transparent!important}.legacyOverlap .vc-sharedkey-run-continuation::after{top:calc(var(--vc-sharedkey-body-top) - var(--vc-sharedkey-gap) - ${2 / dpr}px);height:calc(var(--vc-sharedkey-gap) + ${4 / dpr}px);background:rgb(17,11,36)}</style><ol id=boundary-list>${[0, 1, 2].map((i) => `<li class=vc-sharedkey-row data-sharedkey-channel=chat><div class="message_native ${i ? "group" : ""}"></div></li>`).join("")}</ol><script>${js}</script>`,
+        );
+        const boxes = await page.evaluate(async () => {
+            window.edgeCleanup = Array.from(document.querySelector("#boundary-list").children).map(
+                runs.joinMessageRun,
+            );
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            return Array.from(document.querySelectorAll(".message_native")).map((n) => ({
+                top: n.getBoundingClientRect().top,
+                bottom: n.getBoundingClientRect().bottom,
+            }));
+        });
+        const points = [
+            Math.ceil(boxes[1].top * dpr),
+            Math.floor((boxes[1].top + 20) * dpr),
+            Math.floor(boxes[1].bottom * dpr) - 1,
+            Math.floor((boxes[0].bottom + 8) * dpr),
+        ];
+        const sample = async () =>
+            page.evaluate(
+                async ({ data, points }) => {
+                    const image = new Image();
+                    image.src = "data:image/png;base64," + data;
+                    await image.decode();
+                    const canvas = document.createElement("canvas");
+                    canvas.width = image.width;
+                    canvas.height = image.height;
+                    const ctx = canvas.getContext("2d");
+                    ctx.drawImage(image, 0, 0);
+                    return points.map((y) =>
+                        Array.from(ctx.getImageData(Math.floor(image.width / 2), y, 1, 1).data),
+                    );
+                },
+                { data: await page.screenshot({ encoding: "base64" }), points },
+            );
+        const before = await sample();
+        await page.mouse.move(300, boxes[1].top + 20);
+        const hovered = await sample();
+        assert.deepEqual(hovered[0], hovered[1], "First body pixel hovers exactly like the middle");
+        assert.deepEqual(hovered[2], hovered[1], "Last body pixel hovers exactly like the middle");
+        assert.notDeepEqual(hovered[0], before[0], "Top edge must actually change on hover");
+        assert.deepEqual(hovered[3], before[3], "Gap paint remains constant");
+        await page.evaluate(() => document.body.classList.add("legacyOverlap"));
+        const old = await sample();
+        assert.notDeepEqual(old[0], old[1], "Negative control reproduces the old clipped hover edge");
+        await page.evaluate(() => {
+            document.body.classList.remove("legacyOverlap");
+            window.edgeCleanup.forEach((fn) => fn());
+        });
+    }
+    console.log(
+        "PASS full first/last body-pixel hover at five scales, unchanged gap color, and old overlap negative control",
+    );
     // Discord's native accessory grid contributes 2px padding at each edge unless :empty.
     await page.setContent(
         `<style>body{margin:0}ol{margin:0;padding:0;list-style:none}.message_native{padding:2px 0}.content_native{height:44px}.accessories_native{display:grid;grid-auto-flow:row;row-gap:4px;padding:2px 0}.accessories_native:empty{display:none}</style><style>${css}</style><ol><li id=plain><div class=message_native><div class=content_native></div><div class=accessories_native></div></div></li><li id=encrypted><div class=message_native><div class=content_native></div><div class=accessories_native><span class=vc-sharedkey-paint></span></div></div></li></ol>`,
@@ -322,10 +381,16 @@ try {
         `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{height:80px;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105);--vc-sharedkey-gap-fill:rgb(17,11,36);--vc-sharedkey-gap-hover:rgb(13,9,27);--vc-sharedkey-gap:16px;--vc-sharedkey-seam:2px}.native-mentioned::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:rgb(240,178,50)}</style><style>${css}</style><ol><li id=row class="vc-sharedkey-row vc-sharedkey-run-continuation vc-sharedkey-mentioned"><div class=message_native><button id=action>Message action</button></div></li><li id=native class="vc-sharedkey-row native-mentioned" style="position:relative;margin-top:16px"><div class=message_native>Native reply mention</div></li></ol>`,
     );
     await page.mouse.move(590, 590);
-    const resting = await page.$eval("#row", (node) => getComputedStyle(node).backgroundImage);
+    const resting = await page.$eval(
+        "#row",
+        (node) => getComputedStyle(node.firstElementChild).backgroundColor,
+    );
     const restingGap = await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor);
     await page.click("#action");
-    const hovered = await page.$eval("#row", (node) => getComputedStyle(node).backgroundImage);
+    const hovered = await page.$eval(
+        "#row",
+        (node) => getComputedStyle(node.firstElementChild).backgroundColor,
+    );
     assert.notEqual(hovered, resting);
     assert.equal(
         await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor),
@@ -334,7 +399,10 @@ try {
     );
     await page.mouse.move(590, 590);
     assert.equal(await page.$eval("#action", (node) => node === document.activeElement), true);
-    assert.equal(await page.$eval("#row", (node) => getComputedStyle(node).backgroundImage), resting);
+    assert.equal(
+        await page.$eval("#row", (node) => getComputedStyle(node.firstElementChild).backgroundColor),
+        resting,
+    );
     assert.equal(
         await page.$eval("#row", (node) => getComputedStyle(node, "::after").backgroundColor),
         restingGap,

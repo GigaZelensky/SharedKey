@@ -43,8 +43,11 @@
 .vc-sharedkey-appearance-row { display: flex; align-items: center; justify-content: space-between; padding: 0 0 20px; gap: 16px; }
 .vc-sharedkey-color-actions { display: flex; align-items: center; gap: 12px; }
 .vc-sharedkey-color-actions input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-subtle); border-radius: 4px; background: transparent; cursor: pointer; }
-.vc-sharedkey-row { --vc-sharedkey-body-fill: var(--vc-sharedkey-fill); background: linear-gradient(var(--vc-sharedkey-body-fill), var(--vc-sharedkey-body-fill)) 0 var(--vc-sharedkey-body-top, 0px) / 100% calc(var(--vc-sharedkey-body-bottom, 100%) - var(--vc-sharedkey-body-top, 0px)) no-repeat !important; background-origin: border-box !important; }
-.vc-sharedkey-row:has(> [class*="message_"]:hover), .vc-sharedkey-row:not(:has(> [class*="message_"])):hover { --vc-sharedkey-body-fill: var(--vc-sharedkey-hover); }
+.vc-sharedkey-row { background: transparent !important; }
+.vc-sharedkey-row > [class*="message_"] { background: var(--vc-sharedkey-fill) !important; }
+.vc-sharedkey-row > [class*="message_"]:hover { background: var(--vc-sharedkey-hover) !important; }
+.vc-sharedkey-row:not(:has(> [class*="message_"])) { background: var(--vc-sharedkey-fill) !important; }
+.vc-sharedkey-row:not(:has(> [class*="message_"])):hover { background: var(--vc-sharedkey-hover) !important; }
 .vc-sharedkey-mentioned { position: relative; }
 .vc-sharedkey-mentioned::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--background-mentioned-border, var(--text-warning, #f0b232)); pointer-events: none; z-index: 2; }
 .vc-sharedkey-original { padding: 12px; font-family: var(--font-code); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
@@ -55,11 +58,9 @@
 .vc-sharedkey-file-loading { display: block; padding: 8px 0; color: var(--text-muted); font-size: 13px; }
 .vc-sharedkey-options { box-sizing: border-box; }
 .vc-sharedkey-settings-chat { margin: 0 0 16px; color: var(--text-muted); font-size: 14px; }
-.vc-sharedkey-row > [class*="message_"], #app-mount li.vc-sharedkey-row > [class*="message_"] { background: transparent !important; }
 .vc-sharedkey-composer .vc-sharedkey-composer-surface { background: var(--vc-sharedkey-composer-fill) !important; box-shadow: inset 0 0 0 1px var(--vc-sharedkey-composer-border) !important; border-color: var(--vc-sharedkey-composer-border) !important; }
 
-/* Overlap two device pixels at each edge. Opaque paint avoids a doubled tint;
-   the absolutely positioned strip never participates in message layout. */
+/* Paint only the measured native gap; never overlap a message body. */
 .vc-sharedkey-run-continuation { position: relative; }
 .vc-sharedkey-row > [class*="message_"] { position: relative; z-index: 1; }
 .vc-sharedkey-run-continuation::after {
@@ -67,8 +68,8 @@
     position: absolute;
     left: 0;
     right: 0;
-    top: calc(var(--vc-sharedkey-body-top, 0px) - var(--vc-sharedkey-gap) - var(--vc-sharedkey-seam));
-    height: calc(var(--vc-sharedkey-gap) + 2 * var(--vc-sharedkey-seam));
+    top: var(--vc-sharedkey-gap-top, calc(var(--vc-sharedkey-body-top, 0px) - var(--vc-sharedkey-gap)));
+    height: var(--vc-sharedkey-gap);
     background: var(--vc-sharedkey-gap-fill);
     pointer-events: none;
     z-index: 0;
