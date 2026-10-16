@@ -288,6 +288,27 @@ globalThis.VencordNative = {
 };
 const { default: plugin } = await import(pathToFileURL(path.join(work, "plugin.mjs")));
 plugin.start();
+const notificationPatch = plugin.patches.find((p) => p.find === '"NotificationStore"');
+const notificationPattern = new RegExp(
+    notificationPatch.replacement.match.source.replaceAll("\\i", "[A-Za-z_$][\\w$]*"),
+);
+const nativeNotificationHandler =
+    "({MESSAGE_CREATE:function(event){state.banner++;state.sound++;return true;}})";
+const notificationEffects = { banner: 0, sound: 0 };
+let suppressNotification = true;
+const notificationHandler = new Function(
+    "$self",
+    "state",
+    `return ${nativeNotificationHandler.replace(notificationPattern, notificationPatch.replacement.replace)}`,
+)({ muteNotification: () => suppressNotification }, notificationEffects).MESSAGE_CREATE;
+assert.equal(notificationHandler({ channelId: channel, message: {} }), false);
+assert.deepEqual(notificationEffects, { banner: 0, sound: 0 });
+suppressNotification = false;
+assert.equal(notificationHandler({ channelId: channel, message: {} }), true);
+check(
+    "NotificationStore source guard blocks both banner and sound only when its per-message policy requests it",
+    () => assert.deepEqual(notificationEffects, { banner: 1, sound: 1 }),
+);
 check("Decrypted message body is inserted before reactions", () =>
     assert.equal(globalThis.testAccessory[2], 0),
 );
@@ -896,9 +917,23 @@ check("Startup rendering snapshot contains state/color but no saved keys", () =>
         color: "#7d52ff",
         reading: true,
         previews: "automatic",
+        muteEncryptedNotifications: false,
     });
     assert.equal(JSON.stringify(native.channelStates(null)).includes(key), false);
 });
+await native.setMuteEncryptedNotifications(null, channel, true);
+check("Notification muting defaults off and saves independently of keys, sending, and reading", () => {
+    const info = native.channelInfo(null, channel);
+    assert.equal(info.muteEncryptedNotifications, true);
+    assert.equal(native.channelStates(null)[channel].muteEncryptedNotifications, true);
+    assert.equal(info.enabled, true);
+    assert.equal(info.reading, true);
+    assert.equal(info.fingerprint, crypto.keyId(key));
+    assert.throws(() => native.setMuteEncryptedNotifications(null, channel, "yes"));
+});
+const mutedReload = await import(nativeUrl + "?muted-notifications");
+assert.equal(mutedReload.channelInfo(null, channel).muteEncryptedNotifications, true);
+await native.setMuteEncryptedNotifications(null, channel, false);
 const beforeReadingChange = native.channelInfo(null, channel);
 await native.setReadingOptions(null, channel, false, "never");
 check("Reading and preview options persist independently of outgoing encryption and keys", () => {

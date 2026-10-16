@@ -7,7 +7,7 @@
 import type { SharedKeyNative } from "./Options";
 
 export type PreviewMode = "manual" | "automatic" | "never";
-interface Policy { reading: boolean; previews: PreviewMode; }
+interface Policy { reading: boolean; previews: PreviewMode; muteEncryptedNotifications: boolean; }
 const policies = new Map<string, Policy>();
 const pending = new Map<string, Promise<void>>();
 const grants = new Set<string>();
@@ -15,17 +15,19 @@ const listeners = new Set<(readingChanged: boolean) => void>();
 let generation = 0;
 const token = (message: any) => `${message.channel_id}:${message.id}:${message.content}`;
 export function readingEnabled(channelId: string) { return policies.get(channelId)?.reading ?? false; }
+export function encryptedNotificationsMuted(channelId: string) { return policies.get(channelId)?.muteEncryptedNotifications ?? false; }
 export function previewMode(channelId: string): PreviewMode { return policies.get(channelId)?.previews ?? "automatic"; }
 export function previewsAllowed(message: any) {
     return readingEnabled(message.channel_id) && (previewMode(message.channel_id) === "automatic" || (previewMode(message.channel_id) === "manual" && grants.has(token(message))));
 }
 export function onReadingPolicyChange(callback: (readingChanged: boolean) => void) { listeners.add(callback); return () => { listeners.delete(callback); }; }
-export function rememberReadingPolicy(channelId: string, info: { reading?: boolean; previews?: PreviewMode; }) {
-    const next = { reading: info.reading ?? true, previews: info.previews ?? "automatic" };
+export function rememberReadingPolicy(channelId: string, info: { reading?: boolean; previews?: PreviewMode; muteEncryptedNotifications?: boolean; }) {
+    const next = { reading: info.reading ?? true, previews: info.previews ?? "automatic", muteEncryptedNotifications: info.muteEncryptedNotifications ?? false };
     const previous = policies.get(channelId);
-    if (previous?.reading === next.reading && previous.previews === next.previews) return;
+    if (previous?.reading === next.reading && previous.previews === next.previews && previous.muteEncryptedNotifications === next.muteEncryptedNotifications) return;
     policies.set(channelId, next);
-    for (const key of grants) if (key.startsWith(channelId + ":")) grants.delete(key);
+    if (previous?.reading !== next.reading || previous.previews !== next.previews)
+        for (const key of grants) if (key.startsWith(channelId + ":")) grants.delete(key);
     listeners.forEach(callback => callback(previous?.reading !== next.reading));
 }
 export function ensureReadingPolicy(native: SharedKeyNative, channelId: string): Promise<void> | undefined {

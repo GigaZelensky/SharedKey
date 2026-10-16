@@ -32,7 +32,7 @@ function OptionsFrame({ embedded, channelName, rootProps, children }: { embedded
 }
 
 export function EncryptionOptions({ channelId, channelName, rootProps, native, onUpdate, onMethod, onExchange, embedded }: OptionsProps) {
-    const [info, setInfo] = useState<ChannelInfo>({ enabled: false, reading: true, previews: "automatic", fingerprint: "", keyCount: 0, keyIds: [], color: "#7d52ff", method: "shared", identityFingerprint: "", identityVerified: false, identityChanged: false, exchangePending: false, exchangeExpired: false });
+    const [info, setInfo] = useState<ChannelInfo>({ enabled: false, reading: true, previews: "automatic", muteEncryptedNotifications: false, fingerprint: "", keyCount: 0, keyIds: [], color: "#7d52ff", method: "shared", identityFingerprint: "", identityVerified: false, identityChanged: false, exchangePending: false, exchangeExpired: false });
     const [key, setKey] = useState("");
     const [savedKey, setSavedKey] = useState("");
     const [reveal, setReveal] = useState(false);
@@ -171,6 +171,11 @@ export function EncryptionOptions({ channelId, channelName, rootProps, native, o
                     </select>
                 </div>
                 <p className="vc-sharedkey-preview-note">Loading a preview contacts its host. Discord links may contact Discord. This does not make requests anonymous.</p>
+
+                <div className="vc-sharedkey-toggle-row">
+                    <FormSwitch title="Mute encrypted message notifications" description="No pop-ups or sounds for encrypted messages in this chat, on this device." hideBorder value={info.muteEncryptedNotifications}
+                        disabled={busy || !loaded} onChange={muted => action(async () => { const next = await native.setMuteEncryptedNotifications(channelId, muted); setInfo(next); onUpdate(next); })} />
+                </div>
 
                 <div className="vc-sharedkey-method">
                     <label htmlFor="vc-sharedkey-method">Key setup</label>

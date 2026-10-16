@@ -19,7 +19,7 @@ import { EncryptionMethod, EXCHANGE_PREFIX } from "./exchangeWire";
 import { localFile, localImage, localVideoPoster, retryFailedAttachments } from "./FileAttachments";
 import { installLocalImageActions } from "./LocalImageActions";
 import { MessagePaint } from "./MessagePaint";
-import { encryptedEdit, installMessagePresentation } from "./MessagePresentation";
+import { encryptedEdit, installMessagePresentation, muteNotification } from "./MessagePresentation";
 import { clearMessageCache, rememberPlaintext, retryFailedMessages } from "./MessageView";
 import type * as NativeTypes from "./native";
 import { EncryptionOptions } from "./Options";
@@ -317,8 +317,16 @@ export default definePlugin({
     imageSource: (src: string) => localVideoPoster(src) ?? src,
     nativeVideoProps,
     networkMessage: wireMessage,
+    muteNotification: (message: Message, channelId?: string) => running && muteNotification(message, channelId),
     blockNativeUnfurl: (message: Message) => wireMessage(message).content?.startsWith("[VCS1:"),
     patches: [{
+        // Keep message delivery intact; only Discord's notification consumer exits.
+        find: '"NotificationStore"',
+        replacement: {
+            match: /MESSAGE_CREATE:function\((\i)\)\{/,
+            replace: "$&if($self.muteNotification($1.message,$1.channelId))return false;"
+        }
+    }, {
         // This manager resolves codes extracted from message text over the
         // network. Give it the ciphertext, while native UI stores keep plaintext.
         find: '"MessageCodedLinkManager"',

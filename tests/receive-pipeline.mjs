@@ -456,6 +456,97 @@ console.log(
     "PASS raw reading view, no decryption/download while off, raw notifications, preserved edit protection, per-message consent, cached URL isolation, never/automatic modes, edited links and in-flight policy changes",
 );
 
+model.allowMessagePreview(clicked);
+model.rememberReadingPolicy(channel, { reading: true, previews: "manual", muteEncryptedNotifications: true });
+assert.equal(
+    model.previewsAllowed(clicked),
+    true,
+    "muting notifications must not revoke an existing preview grant",
+);
+const mutedText = { ...hidden, id: "650000000000000050", content: "[VCS1:muted]" };
+await receivePipelineDispatcher.dispatch({ type: "MESSAGE_CREATE", channelId: channel, message: mutedText });
+const displayedMuted = receivePipelineStore.getMessage(channel, mutedText.id);
+assert.notEqual(
+    displayedMuted.content,
+    mutedText.content,
+    "muting does not drop normal message delivery or decryption",
+);
+assert.equal(
+    model.muteNotification(displayedMuted, channel),
+    true,
+    "plaintext projection retains the original encrypted classification",
+);
+const mutedFile = {
+    ...file,
+    id: "650000000000000051",
+    content: "",
+    attachments: [{ ...file.attachments[0], id: "567890123456789995" }],
+};
+await receivePipelineDispatcher.dispatch({ type: "MESSAGE_CREATE", channelId: channel, message: mutedFile });
+assert.equal(model.muteNotification(receivePipelineStore.getMessage(channel, mutedFile.id), channel), true);
+const otherChat = { ...mutedText, channel_id: "123456789012345679" };
+assert.equal(model.muteNotification(otherChat), false, "mute applies only to the configured chat");
+const plainMessage = {
+    id: "650000000000000052",
+    channel_id: channel,
+    content: "ordinary message",
+    attachments: [],
+};
+assert.equal(model.muteNotification(plainMessage), false);
+const beforeMutedBanners = notificationBodies.length;
+for (const message of [mutedText, mutedFile]) {
+    const tracking = { channel_id: channel, message_id: message.id };
+    await notifications.showNotification("icon", "Friend", "native preview", tracking, { sound: "message3" });
+    const count = events.length;
+    await receivePipelineDispatcher.dispatch({
+        type: "NOTIFICATION_CREATE",
+        body: "native preview",
+        trackingProps: tracking,
+        options: { sound: "message3" },
+    });
+    assert.equal(
+        events.length,
+        count,
+        "muted notification event does not reach the native popup/sound consumer",
+    );
+}
+assert.equal(notificationBodies.length, beforeMutedBanners);
+notifications.showNotification("icon", "Friend", "ordinary message", {
+    channel_id: channel,
+    message_id: plainMessage.id,
+});
+assert.equal(notificationBodies.at(-1), "ordinary message");
+model.rememberReadingPolicy(channel, {
+    reading: false,
+    previews: "manual",
+    muteEncryptedNotifications: true,
+});
+assert.equal(
+    model.muteNotification(mutedText),
+    true,
+    "reading and outgoing encryption switches do not control muting",
+);
+const mutedWithReadingOff = notificationBodies.length;
+await notifications.showNotification("icon", "Friend", mutedText.content, { channel_id: channel });
+assert.equal(notificationBodies.length, mutedWithReadingOff);
+model.rememberReadingPolicy(channel, {
+    reading: true,
+    previews: "manual",
+    muteEncryptedNotifications: false,
+});
+await notifications.showNotification("icon", "Friend", mutedText.content, {
+    channel_id: channel,
+    message_id: mutedText.id,
+});
+assert.notEqual(
+    notificationBodies.at(-1),
+    mutedText.content,
+    "unmuting retains existing notification decryption",
+);
+console.log(
+    "PASS per-chat incoming notification mute for text and encrypted files, direct/event paths, raw-wire classification, independent reading, preserved ordinary messages and preview grants",
+);
+
 restore();
 assert.equal(receivePipelineStore.getMessage(channel, editable.id).content, "[VCS1:newedit]");
 assert.equal(

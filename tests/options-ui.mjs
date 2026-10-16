@@ -113,7 +113,7 @@ try {
         }));
     await load("");
     assert.deepEqual(await state(), {
-        checked: [true, true],
+        checked: [true, true, false],
         preview: "automatic",
         disabled: false,
         active: "reading",
@@ -132,14 +132,14 @@ try {
     await page.waitForFunction(
         () => !window.backendEnabled && !document.querySelector("input[type=checkbox]").disabled,
     );
-    assert.deepEqual((await state()).checked, [false, true]);
+    assert.deepEqual((await state()).checked, [false, true, false]);
     await page.click(".vc-sharedkey-toggle-row:nth-of-type(2) input");
     await page.waitForFunction(() => document.querySelector("#active-reading").textContent === "raw");
     assert.equal((await state()).disabled, false);
     await page.select("#vc-sharedkey-previews", "never");
     await page.waitForFunction(() => !document.querySelector("#vc-sharedkey-previews").disabled);
     assert.deepEqual(await state(), {
-        checked: [false, false],
+        checked: [false, false, false],
         preview: "never",
         disabled: false,
         active: "raw",
@@ -179,7 +179,7 @@ try {
     assert.equal((await state()).checked[0], true);
     await load("?new");
     assert.deepEqual(await state(), {
-        checked: [true, false],
+        checked: [true, false, false],
         preview: "never",
         disabled: false,
         active: "raw",
@@ -229,6 +229,24 @@ try {
         (await state()).preview,
         "manual",
         "an explicit On click preference overrides the Automatic default",
+    );
+    const beforeMute = (await state()).checked.slice(0, 2);
+    await page.evaluate(() => document.querySelectorAll("input[type=checkbox]")[2].click());
+    await page.waitForFunction(
+        async () => (await window.native.channelInfo("123456789012345678")).muteEncryptedNotifications,
+    );
+    assert.deepEqual(
+        (await state()).checked.slice(0, 2),
+        beforeMute,
+        "notification mute does not change encryption or reading",
+    );
+    await page.select("#vc-sharedkey-previews", "never");
+    await page.waitForFunction(() => document.querySelector("#vc-sharedkey-previews").value === "never");
+    await load("?new");
+    assert.equal(
+        (await state()).checked[2],
+        true,
+        "notification preference survives reload and other viewing preference saves with a legacy native backend",
     );
     assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(work, "options.png") });

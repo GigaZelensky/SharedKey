@@ -7,6 +7,23 @@ import vm from "node:vm";
 const file = process.env.DISCORD_BUNDLE;
 if (!file) throw new Error("Set DISCORD_BUNDLE to the current Discord web bundle.");
 const bundle = await readFile(file, "utf8");
+const notificationSource = moduleSource(592329);
+const notificationHandlerPatch = /MESSAGE_CREATE:function\(([A-Za-z_$][\w$]*)\)\{/;
+assert.ok(notificationSource.includes('static displayName="NotificationStore"'));
+assert.equal([...notificationSource.matchAll(new RegExp(notificationHandlerPatch.source, "g"))].length, 1);
+const guardedNotificationSource = notificationSource.replace(
+    notificationHandlerPatch,
+    "$&if($self.muteNotification($1.message,$1.channelId))return false;",
+);
+assert.ok(
+    guardedNotificationSource.includes(
+        "MESSAGE_CREATE:function(e){if($self.muteNotification(e.message,e.channelId))return false;",
+    ),
+);
+assert.ok(guardedNotificationSource.includes("playNotificationSound"));
+console.log(
+    "PASS actual NotificationStore message-consumer guard precedes both native popup and separate selected-channel sound paths",
+);
 function moduleSource(id) {
     const start = bundle.indexOf(`${id}(e,t,n){`);
     assert.ok(start >= 0, `Discord module ${id} must still exist; review a changed bundle`);

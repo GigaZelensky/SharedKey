@@ -13,7 +13,7 @@ import { cachedAttachmentInfo } from "./FileAttachments";
 import { incomingEvents, mapIncomingMessages } from "./IncomingEvents";
 import { cachedPlaintext, prepareHistory, requestPlaintext } from "./MessageView";
 import { SharedKeyNative } from "./Options";
-import { ensureReadingPolicy, readingEnabled } from "./ReadingPolicy";
+import { encryptedNotificationsMuted, ensureReadingPolicy, readingEnabled } from "./ReadingPolicy";
 import { installReceiveUpdates, noteReceivedPayload, receivedPayload, refreshReceivedMessages } from "./ReceiveMessages";
 import { allWireMessages, clearWireMessages, getWireMessage, rememberIncoming, rememberReference, wasEncrypted, wireMessage } from "./WireMessages";
 
@@ -21,6 +21,15 @@ const contexts = new Map<string, Message>();
 const edits = new Set<string>();
 const encrypted = (text: unknown): text is string => typeof text === "string" && text.startsWith("[VCS1:");
 const NativeNotifications = findByPropsLazy("showNotification", "playNotificationSound");
+
+function protectedNotificationMessage(message: any, channelId = message?.channel_id): boolean {
+    const wire = getWireMessage(channelId, message?.id) ?? message;
+    return !!(encrypted(wire?.content) || wire?.content?.startsWith(EXCHANGE_PREFIX) || wire?.attachments?.some((file: any) => /\.vcs$/i.test(file.filename)));
+}
+
+export function muteNotification(message: any, channelId = message?.channel_id): boolean {
+    return !!channelId && encryptedNotificationsMuted(channelId) && protectedNotificationMessage(message, channelId);
+}
 
 export function encryptedEdit(channelId: string, messageId: string): boolean {
     const view = MessageStore.getMessage(channelId, messageId);
@@ -36,6 +45,22 @@ export function installMessagePresentation(native: SharedKeyNative) {
     let editGeneration = 0;
     let queue: Promise<any> | undefined;
     let receiving = 0;
+    function notificationMessage(body: unknown, tracking: any = {}, record?: Message): Message | undefined {
+        const channel = tracking?.channel_id ?? record?.channel_id;
+        const id = tracking?.message_id ?? record?.id;
+        const candidate = record ?? (channel && id ? getWireMessage(channel, id) ?? MessageStore.getMessage(channel, id) : undefined);
+        if (candidate && protectedNotificationMessage(candidate, channel)) return getWireMessage(channel, id) ?? candidate;
+        if (typeof body !== "string") return;
+        const fragment = body.match(/\[VCS1:[A-Za-z0-9_-]+\]?/)?.[0];
+        const prefix = fragment?.replace(/\]$/, "");
+        const context = fragment ? contexts.get(fragment) ?? (prefix && prefix.length >= 22 ? Array.from(contexts.values()).find(m => m.content.startsWith(prefix)) : undefined) : undefined;
+        return context ?? (channel && (fragment || body.includes(EXCHANGE_PREFIX)) ? { channel_id: channel, id: id ?? "", content: fragment ?? EXCHANGE_PREFIX } as Message : undefined);
+    }
+    function muted(message?: Message): boolean | Promise<boolean> {
+        if (!message) return false;
+        const preparing = ensureReadingPolicy(native, message.channel_id);
+        return preparing ? preparing.then(() => muteNotification(message)) : muteNotification(message);
+    }
     function notificationBody(body: string, tracking: any = {}): string | Promise<string> {
         if (tracking.channel_id && !readingEnabled(tracking.channel_id)) return body;
         if (body.includes(EXCHANGE_PREFIX)) return "Encryption setup";
@@ -57,13 +82,19 @@ export function installMessagePresentation(native: SharedKeyNative) {
     }
     function showNotification(this: unknown, ...args: any[]) {
         const body = args[2];
-        if (!live || typeof body !== "string" || (!body.includes("[VCS1:") && !body.includes(EXCHANGE_PREFIX))) return originalNotification.apply(this, args);
+        if (!live) return originalNotification.apply(this, args);
+        const decision = muted(notificationMessage(body, args[3], args[4]?.messageRecord));
         // Message notifications call this directly from NotificationStore,
         // without emitting NOTIFICATION_CREATE. Keep Discord's native renderer,
         // sound, click/close callbacks and returned notification handle intact.
-        const deliver = (text: string) => { if (live) return originalNotification.apply(this, [args[0], args[1], text, ...args.slice(3)]); };
-        const text = notificationBody(body, args[3]);
-        return typeof text === "string" ? deliver(text) : text.then(deliver);
+        const proceed = (suppress: boolean) => {
+            if (suppress || !live) return;
+            if (typeof body !== "string" || (!body.includes("[VCS1:") && !body.includes(EXCHANGE_PREFIX))) return originalNotification.apply(this, args);
+            const deliver = (text: string) => { if (live) return originalNotification.apply(this, [args[0], args[1], text, ...args.slice(3)]); };
+            const text = notificationBody(body, args[3]);
+            return typeof text === "string" ? deliver(text) : text.then(deliver);
+        };
+        return typeof decision === "boolean" ? proceed(decision) : decision.then(proceed);
     }
     NativeNotifications.showNotification = showNotification;
     const removeUpdates = installReceiveUpdates(native, event => original.call(FluxDispatcher, event), () => receiving > 0);
@@ -114,10 +145,16 @@ export function installMessagePresentation(native: SharedKeyNative) {
                 }).catch(() => { if (live) showToast("Check this chat's key before editing this message."); });
             }
         }
-        if (event.type === "NOTIFICATION_CREATE" && typeof event.body === "string" && (event.body.includes("[VCS1:") || event.body.includes(EXCHANGE_PREFIX))) {
-            const deliver = (body: string) => { if (live) return original.call(this, { ...event, body }, ...args); };
-            const text = notificationBody(event.body, event.trackingProps);
-            return typeof text === "string" ? deliver(text) : text.then(deliver);
+        if (event.type === "NOTIFICATION_CREATE") {
+            const decision = muted(notificationMessage(event.body, event.trackingProps, event.options?.messageRecord));
+            const proceed = (suppress: boolean) => {
+                if (suppress || !live) return;
+                if (typeof event.body !== "string" || (!event.body.includes("[VCS1:") && !event.body.includes(EXCHANGE_PREFIX))) return original.call(this, event, ...args);
+                const deliver = (body: string) => { if (live) return original.call(this, { ...event, body }, ...args); };
+                const text = notificationBody(event.body, event.trackingProps);
+                return typeof text === "string" ? deliver(text) : text.then(deliver);
+            };
+            return typeof decision === "boolean" ? proceed(decision) : decision.then(proceed);
         }
         return original.call(this, event, ...args);
     }

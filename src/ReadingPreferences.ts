@@ -9,10 +9,11 @@ import { get, set } from "@api/DataStore";
 import type { SharedKeyNative } from "./Options";
 import type { PreviewMode } from "./ReadingPolicy";
 
-interface Preferences { reading: boolean; previews: PreviewMode; }
+interface Preferences { reading: boolean; previews: PreviewMode; muteEncryptedNotifications?: boolean; }
 interface Storage { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<unknown>; }
 const storageKey = "SharedKey_reading_preferences_v1";
-const valid = (value: any): value is Preferences => typeof value?.reading === "boolean" && ["manual", "automatic", "never"].includes(value.previews);
+const valid = (value: any): value is Preferences => typeof value?.reading === "boolean" && ["manual", "automatic", "never"].includes(value.previews)
+    && (value.muteEncryptedNotifications === undefined || typeof value.muteEncryptedNotifications === "boolean");
 
 // These are local display preferences, not encryption keys or synced settings.
 // Keeping them in the renderer also works after a reload with an older native
@@ -34,7 +35,7 @@ export function withReadingPreferences(backend: SharedKeyNative, storage: Storag
     async function decorate(channelId: string, info: any) {
         await load();
         const preferences = saved![channelId] ?? { reading: info.reading ?? true, previews: info.previews ?? "automatic" };
-        return { ...info, ...preferences };
+        return { ...info, ...preferences, muteEncryptedNotifications: preferences.muteEncryptedNotifications ?? info.muteEncryptedNotifications ?? false };
     }
     const native = new Proxy({} as any, { get: (overrides, key) => Object.hasOwn(overrides, key) ? overrides[key] : (backend as any)[key] });
     for (const method of ["channelInfo", "setEnabled", "toggleEnabled", "saveKey", "setColor", "setMethod", "savePassword", "verifyIdentity", "forgetPeerIdentity"]) {
@@ -57,7 +58,20 @@ export function withReadingPreferences(backend: SharedKeyNative, storage: Storag
         const operation = writing.catch(() => {}).then(async () => {
             await load();
             const info = await backend.channelInfo(channelId);
-            const next = { ...saved, [channelId]: { reading, previews } };
+            const next = { ...saved, [channelId]: { ...saved![channelId], reading, previews } };
+            await storage.set(storageKey, next);
+            saved = next;
+            return decorate(channelId, info);
+        });
+        writing = operation.then(() => {}, () => {});
+        return operation;
+    };
+    native.setMuteEncryptedNotifications = (channelId: string, muted: boolean) => {
+        if (!/^\d+$/.test(channelId) || typeof muted !== "boolean") return Promise.reject(new Error("Invalid notification setting."));
+        const operation = writing.catch(() => {}).then(async () => {
+            await load();
+            const info = await decorate(channelId, await backend.channelInfo(channelId));
+            const next = { ...saved, [channelId]: { reading: info.reading, previews: info.previews, muteEncryptedNotifications: muted } };
             await storage.set(storageKey, next);
             saved = next;
             return decorate(channelId, info);
