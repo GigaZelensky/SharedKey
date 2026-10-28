@@ -309,7 +309,7 @@ try {
         ]) {
             await page.mouse.move(590, 590);
             await page.setContent(
-                `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{padding:${top}px 0 ${bottom}px;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105)}.message_native{position:relative;height:${height}px;margin-top:${margin}px}.message_native:hover{background:rgba(125,82,255,.14)}</style><style>${css}</style><ol><li id=height-row data-sharedkey-channel=chat><div class=message_native></div></li></ol><script>${js}</script>`,
+                `<style>body{margin:0;background:black}ol{margin:0;padding:0;list-style:none}li{padding:${top}px 0 ${bottom}px;--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105)}.message_native{position:relative;height:${height}px;margin-top:${margin}px}.message_native:hover{background:rgba(125,82,255,.14)}</style><style>${css}</style><ol><li id=height-row data-sharedkey-channel=chat><div class=message_native></div></li><li><div class=message_native style="height:24px;margin-top:0"></div></li></ol><script>${js}</script>`,
             );
             const box = await page.$eval(".message_native", (n) => ({
                 top: n.getBoundingClientRect().top,

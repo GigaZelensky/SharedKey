@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-// Paint-only strips cover native group gaps. Never rewrite margins, padding,
+// Paint-only strips cover native gaps and final-message spacing. Never rewrite margins, padding,
 // heights or scroll offsets: Discord's virtual list owns that geometry.
 const managers = new WeakMap<HTMLElement, { acquire(row: HTMLElement): () => void; }>();
 export function joinMessageRun(row: HTMLElement): () => void {
@@ -16,7 +16,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
         const saved = new Map<HTMLElement, Map<string, [string, string]>>();
         const surfaces = new Map<HTMLElement, HTMLElement>();
         let frame = 0;
-        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-gap-top", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom"];
+        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-gap-top", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom", "--vc-sharedkey-tail"];
         function reset(element: HTMLElement) {
             const original = saved.get(element);
             if (!original) return;
@@ -24,11 +24,13 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 if (value) element.style.setProperty(property, value, priority);
                 else element.style.removeProperty(property);
             });
-            element.classList.remove("vc-sharedkey-run-continuation");
+            element.classList.remove("vc-sharedkey-run-continuation", "vc-sharedkey-run-end");
             saved.delete(element);
         }
         function layout() {
             frame = 0;
+            const children = Array.from(parent!.children);
+            const lastMessage = children.findLast(child => child.querySelector(":scope > [class*=message_]"));
             for (const element of rows.keys()) {
                 const previous = element.previousElementSibling as HTMLElement | null;
                 const consecutive = element.classList.contains("vc-sharedkey-row") && previous?.classList.contains("vc-sharedkey-row")
@@ -47,14 +49,26 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 const gapTop = consecutive && previousBody ? previousBody.getBoundingClientRect().bottom : body.top;
                 const gapBottom = body.top;
                 const gap = consecutive ? Math.max(0, gapBottom - gapTop) : 0;
+                let tail = 0;
+                if (element === lastMessage && element.classList.contains("vc-sharedkey-row")) {
+                    let spacing = 0;
+                    for (let row: Element | null = element; row && !spacing; row = row.previousElementSibling) {
+                        const body = row.querySelector(":scope > [class*=message_]");
+                        if (body) spacing = Math.max(0, parseFloat(getComputedStyle(body).marginTop) || 0);
+                    }
+                    spacing ||= parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+                    // Stay inside Discord's existing footer space, preserving scroll geometry.
+                    tail = Math.max(0, Math.min(spacing, parent!.getBoundingClientRect().bottom - body.bottom));
+                }
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
                     `${gap}px`, `${gapTop - bounds.top}px`,
                     getComputedStyle(element).getPropertyValue("--vc-sharedkey-accent-fill") || getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"),
-                    `${body.top - bounds.top}px`, `${body.bottom - bounds.top}px`
+                    `${body.top - bounds.top}px`, `${body.bottom - bounds.top}px`, `${tail}px`
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });
                 element.classList.toggle("vc-sharedkey-run-continuation", !!consecutive && gap > 0);
+                element.classList.toggle("vc-sharedkey-run-end", tail > 0);
             }
         }
         function schedule() { if (!frame) frame = requestAnimationFrame(layout); }

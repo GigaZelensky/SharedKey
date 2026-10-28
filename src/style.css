@@ -60,10 +60,10 @@
 .vc-sharedkey-settings-chat { margin: 0 0 16px; color: var(--text-muted); font-size: 14px; }
 .vc-sharedkey-composer .vc-sharedkey-composer-surface { background: var(--vc-sharedkey-composer-fill) !important; box-shadow: inset 0 0 0 1px var(--vc-sharedkey-composer-border) !important; border-color: var(--vc-sharedkey-composer-border) !important; }
 
-/* Paint only the measured native gap; never overlap a message body. */
-.vc-sharedkey-run-continuation { position: relative; }
+/* Paint native gaps and existing footer space without covering message bodies. */
+.vc-sharedkey-run-continuation, .vc-sharedkey-run-end { position: relative; }
 .vc-sharedkey-row > [class*="message_"] { position: relative; z-index: 1; }
-.vc-sharedkey-run-continuation::after {
+:is(.vc-sharedkey-run-continuation, .vc-sharedkey-run-end)::after {
     content: "";
     position: absolute;
     left: 0;
@@ -73,6 +73,14 @@
     background: var(--vc-sharedkey-gap-fill);
     pointer-events: none;
     z-index: 0;
+}
+.vc-sharedkey-run-end::after {
+    height: calc(var(--vc-sharedkey-body-bottom) - var(--vc-sharedkey-gap-top) + var(--vc-sharedkey-tail));
+    mask-image: linear-gradient(to bottom,
+        #000 var(--vc-sharedkey-gap),
+        transparent var(--vc-sharedkey-gap),
+        transparent calc(var(--vc-sharedkey-body-bottom) - var(--vc-sharedkey-gap-top)),
+        #000 calc(var(--vc-sharedkey-body-bottom) - var(--vc-sharedkey-gap-top)));
 }
 
 .vc-sharedkey-composer-surface { transition: background-color 120ms ease-out, box-shadow 120ms ease-out, border-color 120ms ease-out; }
