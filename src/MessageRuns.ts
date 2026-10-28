@@ -15,9 +15,11 @@ export function joinMessageRun(row: HTMLElement): () => void {
         const rows = new Map<HTMLElement, number>();
         const saved = new Map<HTMLElement, Map<string, [string, string]>>();
         const surfaces = new Map<HTMLElement, HTMLElement>();
+        let tailPaint: HTMLSpanElement | undefined;
         let frame = 0;
-        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-gap-top", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom", "--vc-sharedkey-tail"];
+        const properties = ["--vc-sharedkey-gap", "--vc-sharedkey-gap-top", "--vc-sharedkey-gap-fill", "--vc-sharedkey-body-top", "--vc-sharedkey-body-bottom", "--vc-sharedkey-tail", "--vc-sharedkey-paint-bottom"];
         function reset(element: HTMLElement) {
+            if (tailPaint?.parentElement === element) tailPaint.remove();
             const original = saved.get(element);
             if (!original) return;
             original.forEach(([value, priority], property) => {
@@ -29,6 +31,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
         }
         function layout() {
             frame = 0;
+            let end: HTMLElement | undefined;
             const children = Array.from(parent!.children);
             const lastMessage = children.findLast(child => child.querySelector(":scope > [class*=message_]"));
             for (const element of rows.keys()) {
@@ -45,10 +48,15 @@ export function joinMessageRun(row: HTMLElement): () => void {
                     if (surface !== element) resize.observe(surface);
                 }
                 const body = surface.getBoundingClientRect();
+                // Absolute offsets start at the row's padding edge, not its outer border.
+                const origin = bounds.top + (parseFloat(getComputedStyle(element).borderTopWidth) || 0);
                 const previousBody = previous?.querySelector<HTMLElement>(":scope > [class*=message_]") ?? previous;
                 const gapTop = consecutive && previousBody ? previousBody.getBoundingClientRect().bottom : body.top;
                 const gapBottom = body.top;
-                const gap = consecutive ? Math.max(0, gapBottom - gapTop) : 0;
+                // Match native background snapping before display scaling is applied.
+                const snap = (value: number) => Math.round(value);
+                const paintTop = snap(gapTop);
+                const gap = consecutive ? Math.max(0, snap(gapBottom) - paintTop) : 0;
                 let tail = 0;
                 if (element === lastMessage && element.classList.contains("vc-sharedkey-row")) {
                     let spacing = 0;
@@ -62,14 +70,19 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 }
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
-                    `${gap}px`, `${gapTop - bounds.top}px`,
+                    `${gap}px`, `${paintTop - origin}px`,
                     getComputedStyle(element).getPropertyValue("--vc-sharedkey-accent-fill") || getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"),
-                    `${body.top - bounds.top}px`, `${body.bottom - bounds.top}px`, `${tail}px`
+                    `${body.top - origin}px`, `${body.bottom - origin}px`, `${tail}px`, `${snap(body.bottom) - origin}px`
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });
                 element.classList.toggle("vc-sharedkey-run-continuation", !!consecutive && gap > 0);
                 element.classList.toggle("vc-sharedkey-run-end", tail > 0);
+                if (tail > 0) end = element;
             }
+            if (end) {
+                tailPaint ??= Object.assign(document.createElement("span"), { className: "vc-sharedkey-tail", ariaHidden: "true" });
+                if (tailPaint.parentElement !== end || tailPaint !== end.lastElementChild) end.append(tailPaint);
+            } else tailPaint?.remove();
         }
         function schedule() { if (!frame) frame = requestAnimationFrame(layout); }
         const observer = new MutationObserver(schedule);

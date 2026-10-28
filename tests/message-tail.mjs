@@ -75,6 +75,19 @@ try {
             assert.equal(state.tail, Math.min(footer, spacing));
             assert.equal(state.active, footer > 0);
             if (footer) {
+                await page.evaluate(async () => {
+                    const row = document.querySelector("#last");
+                    row.append(row.querySelector(".message_native"));
+                    await new Promise(requestAnimationFrame);
+                    await new Promise(requestAnimationFrame);
+                });
+                assert.equal(
+                    await page.$eval("#last", (row) =>
+                        row.firstElementChild.classList.contains("message_native"),
+                    ),
+                    true,
+                    "Native row updates keep the message first and the paint last",
+                );
                 async function sample() {
                     const data = await page.screenshot({ encoding: "base64" });
                     return page.evaluate(
@@ -154,11 +167,21 @@ try {
                 false,
                 "A later ordinary message removes the encrypted tail",
             );
+            assert.equal(
+                await page.$(".vc-sharedkey-tail"),
+                null,
+                "A later ordinary message removes the paint node",
+            );
             await page.evaluate(() => window.cleanup.forEach((fn) => fn()));
             assert.equal(
                 await page.$eval("#last", (row) => row.style.getPropertyValue("--vc-sharedkey-tail")),
                 "",
                 "Cleanup restores tail state",
+            );
+            assert.equal(
+                await page.$(".vc-sharedkey-tail"),
+                null,
+                "Cleanup removes the decorative paint node",
             );
         }
     }

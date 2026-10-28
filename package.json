@@ -1,6 +1,6 @@
 {
     "name": "vencord-sharedkey",
-    "version": "0.5.13",
+    "version": "0.5.14",
     "private": true,
     "description": "Per-chat encryption for Vencord with automatic key exchange, shared keys, and passwords.",
     "license": "GPL-3.0-or-later",
@@ -10,7 +10,7 @@
     },
     "scripts": {
         "test": "node tests/verify.mjs && node tests/receive-pipeline.mjs && node tests/key-modes.mjs && node tests/offline-decrypt.mjs && node tests/gif-previews.mjs",
-        "test:browser": "node tests/options-ui.mjs && node tests/video-attachments.mjs && node tests/composer.mjs && node tests/message-seams.mjs && node tests/message-tail.mjs",
+        "test:browser": "node tests/options-ui.mjs && node tests/video-attachments.mjs && node tests/composer.mjs && node tests/message-seams.mjs && node tests/message-tail.mjs && node tests/message-pixel-edges.mjs",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "stage": "node scripts/stage.mjs",

@@ -63,7 +63,7 @@
 /* Paint native gaps and existing footer space without covering message bodies. */
 .vc-sharedkey-run-continuation, .vc-sharedkey-run-end { position: relative; }
 .vc-sharedkey-row > [class*="message_"] { position: relative; z-index: 1; }
-:is(.vc-sharedkey-run-continuation, .vc-sharedkey-run-end)::after {
+.vc-sharedkey-run-continuation::after {
     content: "";
     position: absolute;
     left: 0;
@@ -74,13 +74,15 @@
     pointer-events: none;
     z-index: 0;
 }
-.vc-sharedkey-run-end::after {
-    height: calc(var(--vc-sharedkey-body-bottom) - var(--vc-sharedkey-gap-top) + var(--vc-sharedkey-tail));
-    mask-image: linear-gradient(to bottom,
-        #000 var(--vc-sharedkey-gap),
-        transparent var(--vc-sharedkey-gap),
-        transparent calc(var(--vc-sharedkey-body-bottom) - var(--vc-sharedkey-gap-top)),
-        #000 calc(var(--vc-sharedkey-body-bottom) - var(--vc-sharedkey-gap-top)));
+.vc-sharedkey-tail {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: var(--vc-sharedkey-paint-bottom);
+    height: var(--vc-sharedkey-tail);
+    background: var(--vc-sharedkey-gap-fill);
+    pointer-events: none;
+    z-index: 0;
 }
 
 .vc-sharedkey-composer-surface { transition: background-color 120ms ease-out, box-shadow 120ms ease-out, border-color 120ms ease-out; }
