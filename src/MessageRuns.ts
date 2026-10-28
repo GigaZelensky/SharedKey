@@ -32,16 +32,6 @@ export function joinMessageRun(row: HTMLElement): () => void {
         function layout() {
             frame = 0;
             let end: HTMLElement | undefined;
-            // Backgrounds snap in content coordinates, before scrolling and translation.
-            let paintOffset = -window.scrollY;
-            for (let node: HTMLElement | null = parent; node; node = node.parentElement) {
-                if (node !== document.scrollingElement) paintOffset -= node.scrollTop;
-                const { transform } = getComputedStyle(node);
-                if (transform !== "none") {
-                    const matrix = new DOMMatrixReadOnly(transform);
-                    if (matrix.m11 === 1 && matrix.m22 === 1 && !matrix.m12 && !matrix.m21) paintOffset += matrix.m42;
-                }
-            }
             const children = Array.from(parent!.children);
             const lastMessage = children.findLast(child => child.querySelector(":scope > [class*=message_]"));
             for (const element of rows.keys()) {
@@ -63,10 +53,9 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 const previousBody = previous?.querySelector<HTMLElement>(":scope > [class*=message_]") ?? previous;
                 const gapTop = consecutive && previousBody ? previousBody.getBoundingClientRect().bottom : body.top;
                 const gapBottom = body.top;
-                // Match native background snapping before display scaling is applied.
-                const snap = (value: number) => Math.round(value - paintOffset) + paintOffset;
-                const paintTop = snap(gapTop);
-                const gap = consecutive ? Math.max(0, snap(gapBottom) - paintTop) : 0;
+                // Keep the native fractional edges. Rounding each row moves paint across
+                // its hover boundary at fractional zoom and shifts the rest of the run.
+                const gap = consecutive ? Math.max(0, gapBottom - gapTop) : 0;
                 let tail = 0;
                 if (element === lastMessage && element.classList.contains("vc-sharedkey-row")) {
                     let spacing = 0;
@@ -80,9 +69,9 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 }
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
-                    `${gap}px`, `${paintTop - origin}px`,
+                    `${gap}px`, `${gapTop - origin}px`,
                     getComputedStyle(element).getPropertyValue("--vc-sharedkey-accent-fill") || getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"),
-                    `${body.top - origin}px`, `${body.bottom - origin}px`, `${tail}px`, `${snap(body.bottom) - origin}px`
+                    `${body.top - origin}px`, `${body.bottom - origin}px`, `${tail}px`, `${body.bottom - origin}px`
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });
                 element.classList.toggle("vc-sharedkey-run-continuation", !!consecutive && gap > 0);

@@ -40,12 +40,39 @@ try {
                     const junctions = await page.evaluate(
                         async ({ mode, offset }) => {
                             if (mode === "scroll") document.querySelector("#scroll").scrollTop = offset;
-                            [...document.querySelectorAll("li")].forEach(runs.joinMessageRun);
+                            const rows = [...document.querySelectorAll("li")];
+                            const geometry = () =>
+                                rows.map((row) => {
+                                    const body = row.firstElementChild.getBoundingClientRect();
+                                    return [body.top, body.bottom, row.getBoundingClientRect().height];
+                                });
+                            const before = JSON.stringify(geometry());
+                            rows.forEach(runs.joinMessageRun);
                             await new Promise(requestAnimationFrame);
                             await new Promise(requestAnimationFrame);
                             const bodies = [...document.querySelectorAll(".message_native")].map((e) =>
                                 e.getBoundingClientRect(),
                             );
+                            if (JSON.stringify(geometry()) !== before)
+                                throw new Error("Paint must not move native messages");
+                            rows.slice(1).forEach((row, index) => {
+                                const origin =
+                                    row.getBoundingClientRect().top +
+                                    parseFloat(getComputedStyle(row).borderTopWidth);
+                                const paint = getComputedStyle(row, "::after");
+                                const top = origin + parseFloat(paint.top);
+                                const bottom = top + parseFloat(paint.height);
+                                if (
+                                    Math.abs(top - bodies[index].bottom) > 0.0001 ||
+                                    Math.abs(bottom - bodies[index + 1].top) > 0.0001
+                                )
+                                    throw new Error(
+                                        `Gap paint shifted from native edges: ${JSON.stringify({ top, bottom, previous: bodies[index].bottom, next: bodies[index + 1].top })}`,
+                                    );
+                            });
+                            const tail = document.querySelector(".vc-sharedkey-tail").getBoundingClientRect();
+                            if (Math.abs(tail.top - bodies[2].bottom) > 0.0001)
+                                throw new Error("Bottom fill must start at the exact native body edge");
                             return [
                                 bodies[0].bottom,
                                 bodies[1].top,
@@ -98,7 +125,7 @@ try {
         `Message paint junctions must not lose or double a pixel (${checked} cases): ${JSON.stringify(failures.slice(0, 5))}`,
     );
     console.log(
-        `PASS ${checked} device-pixel edge scans across fractional layout/translation/scroll offsets, borders, and display scales`,
+        `PASS ${checked} exact native-edge geometry checks and device-pixel scans across fractional layout/translation/scroll offsets, borders, and display scales`,
     );
 } finally {
     await browser.close();
