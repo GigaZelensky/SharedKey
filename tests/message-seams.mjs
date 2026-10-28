@@ -418,6 +418,85 @@ try {
     console.log(
         "PASS body hover clears after pointer exit with a focused action; inter-message gap tint stays constant and local/native yellow bars remain",
     );
+    await build({
+        entryPoints: [root + "/src/MessageColors.ts"],
+        bundle: true,
+        format: "iife",
+        globalName: "colors",
+        outfile: root + "/.test-output/message-colors-test.js",
+    });
+    const colorJs = await readFile(root + "/.test-output/message-colors-test.js", "utf8");
+    for (const dpr of [1, 1.25, 2]) {
+        await page.setViewport({ width: 600, height: 600, deviceScaleFactor: dpr });
+        for (const color of ["#7d52ff", "#28ba87"]) {
+            await page.mouse.move(590, 590);
+            await page.setContent(
+                `<style>body{margin:0;background:black}ol{padding:0;margin:0;list-style:none}.message_native{height:64px;margin-top:16px}.mentioned_native::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:rgb(240,178,50)}</style><style>${css}</style><ol id=list></ol><script>${js}</script><script>${colorJs}</script>`,
+            );
+            const bounds = await page.evaluate(async (color) => {
+                const list = document.querySelector("#list");
+                list.innerHTML = [false, true, true, false]
+                    .map(
+                        (mentioned, index) =>
+                            `<li class="vc-sharedkey-row" data-sharedkey-channel="chat" style="--vc-sharedkey-color:${color};--vc-sharedkey-accent-fill:${colors.messageTint(color, 0.14)};--vc-sharedkey-fill:${mentioned ? colors.highlightedTint(color, 0.14) : colors.messageTint(color, 0.14)};--vc-sharedkey-hover:${mentioned ? colors.highlightedTint(color, 0.105) : colors.messageTint(color, 0.105)}"><div class="message_native ${mentioned ? "mentioned_native" : ""}"></div></li>`,
+                    )
+                    .join("");
+                Array.from(list.children).forEach(runs.joinMessageRun);
+                await new Promise(requestAnimationFrame);
+                return Array.from(list.children).map((row) => {
+                    const body = row.firstElementChild.getBoundingClientRect();
+                    return { top: body.top, bottom: body.bottom };
+                });
+            }, color);
+            async function sampleReplyGaps() {
+                const data = await page.screenshot({ encoding: "base64" });
+                return page.evaluate(
+                    async ({ data, dpr, bounds }) => {
+                        const image = new Image();
+                        image.src = "data:image/png;base64," + data;
+                        await image.decode();
+                        const canvas = document.createElement("canvas");
+                        canvas.width = image.width;
+                        canvas.height = image.height;
+                        const context = canvas.getContext("2d");
+                        context.drawImage(image, 0, 0);
+                        const pixel = (x, y) =>
+                            Array.from(
+                                context.getImageData(Math.floor(x * dpr), Math.floor(y * dpr), 1, 1).data,
+                            );
+                        return {
+                            accent: pixel(300, bounds[0].top + 20),
+                            highlighted: pixel(300, bounds[1].top + 20),
+                            gaps: bounds
+                                .slice(1)
+                                .map((body, i) => pixel(300, (bounds[i].bottom + body.top) / 2)),
+                            gapBorders: bounds
+                                .slice(1)
+                                .map((body, i) => pixel(0.5, (bounds[i].bottom + body.top) / 2)),
+                            bodyBorder: pixel(0.5, bounds[1].top + 20),
+                        };
+                    },
+                    { data, dpr, bounds },
+                );
+            }
+            const rest = await sampleReplyGaps();
+            for (const gap of rest.gaps)
+                assert.deepEqual(gap, rest.accent, "Reply/mention state cannot color the inter-message gap");
+            for (const border of rest.gapBorders)
+                assert.deepEqual(border, rest.accent, "Native yellow gutter stops at the message body");
+            assert.notDeepEqual(rest.highlighted, rest.accent, "Reply body keeps its highlighted tint");
+            assert.deepEqual(rest.bodyBorder, [240, 178, 50, 255]);
+            await page.mouse.move(300, bounds[1].top + 20);
+            const hover = await sampleReplyGaps();
+            assert.deepEqual(hover.gaps, rest.gaps, "Hover cannot change gap tint");
+            assert.notDeepEqual(hover.highlighted, rest.highlighted);
+            if (dpr === 1 && color === "#7d52ff")
+                await page.screenshot({ path: root + "/.test-output/reply-gap.png" });
+        }
+    }
+    console.log(
+        "PASS reply/mention body tint and yellow gutter stay inside native bounds; adjoining gaps keep accent color across colors, scales, and hover",
+    );
     console.log(
         `PASS ${checked} pixel cases: fractional rows, 100/125/150/200% scaling, zero/16/24px gaps, dark/light backgrounds, no dark or doubled-tint seam, foreground preserved, unchanged scroll geometry. Old shadow reproduced ${oldSeams} dark pixels.`,
     );

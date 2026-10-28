@@ -50,7 +50,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 if (!saved.has(element)) saved.set(element, new Map(properties.map(property => [property, [element.style.getPropertyValue(property), element.style.getPropertyPriority(property)]])));
                 const values = [
                     `${gap}px`, `${gapTop - bounds.top}px`,
-                    getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"),
+                    getComputedStyle(element).getPropertyValue("--vc-sharedkey-accent-fill") || getComputedStyle(element).getPropertyValue("--vc-sharedkey-fill"),
                     `${body.top - bounds.top}px`, `${body.bottom - bounds.top}px`
                 ];
                 properties.forEach((property, i) => { if (element.style.getPropertyValue(property) !== values[i]) element.style.setProperty(property, values[i]); });

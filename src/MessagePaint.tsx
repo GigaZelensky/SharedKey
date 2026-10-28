@@ -61,13 +61,14 @@ export function MessagePaint({ message, native, version }: { message: Message; n
         row.classList.toggle("vc-sharedkey-decrypt-error", decryptionFailed(wire));
         row.dataset.sharedkeyChannel = wire.channel_id;
         row.style.setProperty("--vc-sharedkey-color", color);
+        row.style.setProperty("--vc-sharedkey-accent-fill", messageTint(color, 0.14));
         row.style.setProperty("--vc-sharedkey-fill", message.mentioned ? highlightedTint(color, 0.14) : messageTint(color, 0.14));
         row.style.setProperty("--vc-sharedkey-hover", message.mentioned ? highlightedTint(color, 0.105) : messageTint(color, 0.105));
         const cleanupRun = joinMessageRun(row);
         const release = retainAttachmentViews(wire.channel_id, wire.attachments ?? []);
         return () => {
             release(); cleanupRun(); row.classList.remove("vc-sharedkey-row", "vc-sharedkey-decrypt-error"); delete row.dataset.sharedkeyChannel;
-            for (const property of ["--vc-sharedkey-color", "--vc-sharedkey-fill", "--vc-sharedkey-hover"]) row.style.removeProperty(property);
+            for (const property of ["--vc-sharedkey-color", "--vc-sharedkey-accent-fill", "--vc-sharedkey-fill", "--vc-sharedkey-hover"]) row.style.removeProperty(property);
         };
     }, [message, color, protectedMessage]);
     useEffect(() => {
