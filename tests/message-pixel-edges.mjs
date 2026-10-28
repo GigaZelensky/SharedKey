@@ -30,55 +30,67 @@ try {
     const page = await browser.newPage();
     for (const dpr of [0.8, 0.9, 1, 1.1, 1.125, 1.25, 1.375, 1.5, 1.5625, 1.75, 1.875, 2, 2.5, 3]) {
         await page.setViewport({ width: 600, height: 500, deviceScaleFactor: dpr });
-        for (const offset of [0, 0.125, 0.25, 0.5, 0.75])
-            for (const border of [0, 1]) {
-                await page.mouse.move(590, 490);
-                await page.setContent(
-                    `<style>body{margin:0;background:black}ol{margin:0;padding:${offset}px 0 32px;list-style:none}li{border-top:${border}px solid transparent;--vc-sharedkey-color:#7d52ff;--vc-sharedkey-accent-fill:rgba(125,82,255,.14);--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105)}.message_native{height:59.625px;margin-top:16px}#reference{position:fixed;top:450px;width:600px;height:20px;background:rgba(125,82,255,.14)}</style><style>${css}</style><ol>${[0, 1, 2].map(() => '<li class="vc-sharedkey-row" data-sharedkey-channel="chat"><div class="message_native"></div></li>').join("")}</ol><div id=reference></div><script>${js}</script>`,
-                );
-                const junctions = await page.evaluate(async () => {
-                    [...document.querySelectorAll("li")].forEach(runs.joinMessageRun);
-                    await new Promise(requestAnimationFrame);
-                    await new Promise(requestAnimationFrame);
-                    const bodies = [...document.querySelectorAll(".message_native")].map((e) =>
-                        e.getBoundingClientRect(),
+        for (const mode of ["layout", "translation", "scroll"])
+            for (const offset of [0, 0.125, 0.25, 0.5, 0.75])
+                for (const border of [0, 1]) {
+                    await page.mouse.move(590, 490);
+                    await page.setContent(
+                        `<style>body{margin:0;background:black}#scroll{height:300px;overflow:auto}ol{margin:0;padding:${mode === "layout" ? offset : 0}px 0 ${mode === "scroll" ? 180 : 32}px;transform:${mode === "translation" ? "translateY(" + offset + "px)" : "none"};list-style:none}li{border-top:${border}px solid transparent;--vc-sharedkey-color:#7d52ff;--vc-sharedkey-accent-fill:rgba(125,82,255,.14);--vc-sharedkey-fill:rgba(125,82,255,.14);--vc-sharedkey-hover:rgba(125,82,255,.105)}.message_native{height:59.625px;margin-top:16px}#reference{position:fixed;top:450px;width:600px;height:20px;background:rgba(125,82,255,.14)}</style><style>${css}</style><div id=scroll><ol>${[0, 1, 2].map(() => '<li class="vc-sharedkey-row" data-sharedkey-channel="chat"><div class="message_native"></div></li>').join("")}</ol></div><div id=reference></div><script>${js}</script>`,
                     );
-                    return [
-                        bodies[0].bottom,
-                        bodies[1].top,
-                        bodies[1].bottom,
-                        bodies[2].top,
-                        bodies[2].bottom,
-                    ];
-                });
-                const data = await page.screenshot({ encoding: "base64" });
-                const bad = await page.evaluate(
-                    async ({ data, dpr, junctions }) => {
-                        const image = new Image();
-                        image.src = "data:image/png;base64," + data;
-                        await image.decode();
-                        const canvas = document.createElement("canvas");
-                        canvas.width = image.width;
-                        canvas.height = image.height;
-                        const context = canvas.getContext("2d");
-                        context.drawImage(image, 0, 0);
-                        const read = (y) => [...context.getImageData(Math.floor(300 * dpr), y, 1, 1).data];
-                        const reference = read(Math.floor(460 * dpr));
-                        return junctions.flatMap((edge) => {
-                            const result = [];
-                            for (let y = Math.floor(edge * dpr) - 2; y <= Math.ceil(edge * dpr) + 2; y++) {
-                                const color = read(y);
-                                if (color.some((v, i) => Math.abs(v - reference[i]) > 2))
-                                    result.push({ edge, y, color, reference });
-                            }
-                            return result;
-                        });
-                    },
-                    { data, dpr, junctions },
-                );
-                if (bad.length) failures.push({ dpr, offset, border, bad });
-                checked++;
-            }
+                    const junctions = await page.evaluate(
+                        async ({ mode, offset }) => {
+                            if (mode === "scroll") document.querySelector("#scroll").scrollTop = offset;
+                            [...document.querySelectorAll("li")].forEach(runs.joinMessageRun);
+                            await new Promise(requestAnimationFrame);
+                            await new Promise(requestAnimationFrame);
+                            const bodies = [...document.querySelectorAll(".message_native")].map((e) =>
+                                e.getBoundingClientRect(),
+                            );
+                            return [
+                                bodies[0].bottom,
+                                bodies[1].top,
+                                bodies[1].bottom,
+                                bodies[2].top,
+                                bodies[2].bottom,
+                            ];
+                        },
+                        { mode, offset },
+                    );
+                    const data = await page.screenshot({ encoding: "base64" });
+                    const bad = await page.evaluate(
+                        async ({ data, dpr, junctions }) => {
+                            const image = new Image();
+                            image.src = "data:image/png;base64," + data;
+                            await image.decode();
+                            const canvas = document.createElement("canvas");
+                            canvas.width = image.width;
+                            canvas.height = image.height;
+                            const context = canvas.getContext("2d");
+                            context.drawImage(image, 0, 0);
+                            const read = (y) => [
+                                ...context.getImageData(Math.floor(300 * dpr), y, 1, 1).data,
+                            ];
+                            const reference = read(Math.floor(460 * dpr));
+                            return junctions.flatMap((edge) => {
+                                const result = [];
+                                for (
+                                    let y = Math.floor(edge * dpr) - 2;
+                                    y <= Math.ceil(edge * dpr) + 2;
+                                    y++
+                                ) {
+                                    const color = read(y);
+                                    // Software-rendered translucent edges can quantize by three RGB levels.
+                                    if (color.some((v, i) => Math.abs(v - reference[i]) > 3))
+                                        result.push({ edge, y, color, reference });
+                                }
+                                return result;
+                            });
+                        },
+                        { data, dpr, junctions },
+                    );
+                    if (bad.length) failures.push({ mode, dpr, offset, border, bad });
+                    checked++;
+                }
     }
     assert.equal(
         failures.length,
@@ -86,7 +98,7 @@ try {
         `Message paint junctions must not lose or double a pixel (${checked} cases): ${JSON.stringify(failures.slice(0, 5))}`,
     );
     console.log(
-        `PASS ${checked} device-pixel edge scans across fractional row offsets, borders, and display scales`,
+        `PASS ${checked} device-pixel edge scans across fractional layout/translation/scroll offsets, borders, and display scales`,
     );
 } finally {
     await browser.close();

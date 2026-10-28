@@ -32,6 +32,16 @@ export function joinMessageRun(row: HTMLElement): () => void {
         function layout() {
             frame = 0;
             let end: HTMLElement | undefined;
+            // Backgrounds snap in content coordinates, before scrolling and translation.
+            let paintOffset = -window.scrollY;
+            for (let node: HTMLElement | null = parent; node; node = node.parentElement) {
+                if (node !== document.scrollingElement) paintOffset -= node.scrollTop;
+                const { transform } = getComputedStyle(node);
+                if (transform !== "none") {
+                    const matrix = new DOMMatrixReadOnly(transform);
+                    if (matrix.m11 === 1 && matrix.m22 === 1 && !matrix.m12 && !matrix.m21) paintOffset += matrix.m42;
+                }
+            }
             const children = Array.from(parent!.children);
             const lastMessage = children.findLast(child => child.querySelector(":scope > [class*=message_]"));
             for (const element of rows.keys()) {
@@ -54,7 +64,7 @@ export function joinMessageRun(row: HTMLElement): () => void {
                 const gapTop = consecutive && previousBody ? previousBody.getBoundingClientRect().bottom : body.top;
                 const gapBottom = body.top;
                 // Match native background snapping before display scaling is applied.
-                const snap = (value: number) => Math.round(value);
+                const snap = (value: number) => Math.round(value - paintOffset) + paintOffset;
                 const paintTop = snap(gapTop);
                 const gap = consecutive ? Math.max(0, snap(gapBottom) - paintTop) : 0;
                 let tail = 0;
